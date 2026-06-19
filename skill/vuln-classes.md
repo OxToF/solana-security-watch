@@ -233,3 +233,75 @@ supply-chain reports.
 **Safe pattern** — Minimise direct dependencies; pin versions; `overflow-checks =
 true` neutralises a whole class of arithmetic advisories; review new transitive
 crates before bumping.
+
+---
+
+## 15. Arbitrary CPI (unconstrained invoked program)
+
+**What** — Calling `invoke` / `invoke_signed` with a program account the caller
+supplies, without checking it's the intended program. An attacker substitutes a
+malicious program that mimics the expected interface and drains/forges.
+
+**Spot it** — A `program` account typed as `AccountInfo` / `UncheckedAccount` (not
+`Program<'info, Token>`) that is passed into a CPI.
+
+```
+grep -rnE "invoke\(|invoke_signed\(" programs --include='*.rs'
+```
+
+**Safe pattern** — Type the callee as Anchor's `Program<'info, Token>` (or assert
+`program.key() == expected_program::ID`) so the runtime pins the program id before
+the CPI.
+
+---
+
+## 16. Account closing / revival
+
+**What** — "Closing" an account by zeroing lamports/data without the close
+discriminator, leaving it revivable in the same transaction (refunded by the
+attacker) → double-spend of a one-time account.
+
+**Spot it** — Manual close logic (`**lamports.borrow_mut() = 0`, `data.fill(0)`)
+instead of Anchor's `close = recipient` constraint.
+
+**Safe pattern** — Use Anchor's `#[account(mut, close = recipient)]`, which writes
+the `CLOSED_ACCOUNT_DISCRIMINATOR` and defunds atomically. Never hand-roll close.
+
+---
+
+## 17. Duplicate mutable accounts
+
+**What** — An instruction takes two mutable accounts of the same type and assumes
+they differ; an attacker passes the *same* account twice, so writes to "A" and "B"
+collide (e.g. transfer to self nets a free balance).
+
+**Spot it** — Two `Account<T>` of the same type both `mut` in one context with no
+inequality check.
+
+**Safe pattern** — Add `constraint = a.key() != b.key()` (or Anchor's
+`#[account(constraint = ...)]`) for every same-type mutable pair.
+
+---
+
+## 18. Bump-seed canonicalization
+
+**What** — Re-deriving a PDA from a user-supplied `bump` instead of the canonical
+one lets an attacker grind an alternate valid PDA for the same seeds → bypasses
+"one account per seed" assumptions.
+
+**Spot it** — `Pubkey::create_program_address` with a `bump` taken from instruction
+data, or `seeds` without a stored canonical `bump`.
+
+```
+grep -rnE "create_program_address|bump\b" programs --include='*.rs'
+```
+
+**Safe pattern** — Use Anchor's `seeds = [...]` + `bump` (canonical), or store the
+canonical bump on first init and re-use it with `bump = stored_bump`.
+
+---
+
+> **Provenance note** — classes #15–#18 were added after a watch pass over the
+> `sealevel-attacks` corpus surfaced them as gaps in this checklist. That is the
+> loop working as intended: each pass can harden the skill itself, not just the
+> target. See the Demo section in the README.
