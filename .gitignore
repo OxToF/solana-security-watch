@@ -1,0 +1,36 @@
+# Environment / secrets — NEVER commit
+.env
+.env.*
+!.env.example
+*.env
+.envrc
+
+# API keys, RPC endpoints, tokens
+*secret*
+*credentials*
+*.pem
+*.key
+*-keypair.json
+id.json
+wallet*.json
+.config/solana/
+
+# Anchor / Solana build artifacts
+target/
+.anchor/
+test-ledger/
+
+# Rust
+Cargo.lock.bak
+**/*.rs.bk
+
+# Node / tooling
+node_modules/
+dist/
+.cache/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
