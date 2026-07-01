@@ -4,11 +4,21 @@ Anonymised findings produced by running this exact loop on a production Solana
 DeFi protocol. They calibrate what a good report looks like and how the vuln
 classes show up in practice. Code identifiers are generic.
 
+All four below are tagged `VERIFIED-SOURCE` — the source was read and the
+exploit path traced by hand, no formal/fuzz tooling was run. That's an honest,
+weaker tier than `PROVEN`/`TESTED` (see
+[`daily-watch.md` §0](daily-watch.md#0-verification-discipline--a-scientific-process-for-security-claims))
+— a real re-run of this pass on classes #4–#7 (rounding/math) would attempt a
+Kani harness or a Trident fuzz run before closing the finding, not stop at a
+manual read.
+
 ---
 
 ## HIGH — Vesting lock bypass via unchecked deserialisation
 
 **Class** — #1 account substitution + #3 manual deserialisation without owner check.
+
+**Confidence** — `VERIFIED-SOURCE` (manual trace of the instruction; no fuzz/formal tooling run).
 
 **Surface** — An `unstake` instruction read the founder's vesting account as an
 `UncheckedAccount`, then `VestingState::try_deserialize`'d it **without** checking
@@ -30,6 +40,8 @@ check on a manually-deserialised account. This is why surface #1 is always first
 ## MEDIUM — Debt without collateral (divergence from a correct sibling)
 
 **Class** — #8 missing check, surfaced by sibling comparison.
+
+**Confidence** — `VERIFIED-SOURCE` (diffed against sibling instructions `borrow`/`founder_borrow`; no tooling run).
 
 **Surface** — A `contributor_borrow` instruction allowed borrowing up to a % of a
 claimed allocation **without** declaring the collateral token account or checking
@@ -53,6 +65,8 @@ contexts — the odd one out is the finding.
 
 **Class** — #1 account substitution, DoS variant.
 
+**Confidence** — `VERIFIED-SOURCE` (traced the byte-offset read and the missing owner check by hand).
+
 **Surface** — A `rollover` instruction read bytes 48–56 of a gauge-state account
 without checking `owner == program_id`. A PDA can be pre-created by a third party
 before the real instruction initialises it.
@@ -73,6 +87,8 @@ cheap to fix and the journal proves the surface was considered.
 ## INFO — Silent truncating cast (defence-in-depth)
 
 **Class** — #7 unbounded cast.
+
+**Confidence** — `VERIFIED-SOURCE` for the cast itself; the "not exploitable" claim rests on a supply-curve argument that was reasoned, not proven — a real Kani harness bounding the `u128→u64` cast against the maximum achievable supply would upgrade this to `PROVEN`.
 
 **Surface** — A voting-power formula computed in `u128` then did `as u64`. For an
 extreme whale the `u128` could exceed `u64::MAX` and silently truncate, under-counting

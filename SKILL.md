@@ -41,7 +41,7 @@ Load only the file you need for the task at hand:
 
 | File | Load it when… |
 |---|---|
-| [`skill/daily-watch.md`](skill/daily-watch.md) | Running the watch loop — the collect/confront/report procedure and source list. |
+| [`skill/daily-watch.md`](skill/daily-watch.md) | Running the watch loop — the collect/confront/report procedure, verification discipline (§0: confidence tiers, toolchain), and source list. |
 | [`skill/vuln-classes.md`](skill/vuln-classes.md) | Confronting code against bug classes — the Anchor/SPL checklist with detection patterns. |
 | [`skill/case-studies.md`](skill/case-studies.md) | You want worked examples of real findings (anonymised) to calibrate severity and format. |
 | [`commands/security-watch.md`](commands/security-watch.md) | You want the mechanical scan: deps + grep + advisory search → report. |
@@ -60,10 +60,22 @@ Install `commands/security-watch.md` as a Claude Code slash command and run
 3. **Pull recent advisories** — WebSearch the last 48h of Solana/Anchor/DeFi
    disclosures.
 4. **Emit a dated report** — `RAS` (nothing relevant) or per-finding: technique,
-   surface, `file:line`, estimated severity, proposed fix. Never auto-applies.
+   surface, `file:line`, estimated severity, confidence tier, proposed fix.
+   Never auto-applies.
 
-## Core principle
+## Core principles
 
-**Propose, don't apply.** On production code, this skill flags and proposes — it
-does not push fixes. Human validation gates every change. After any struct or
-account-context change, the IDL must be rebuilt before fixes are trusted on-chain.
+- **Propose, don't apply.** On production code, this skill flags and proposes —
+  it does not push fixes. Human validation gates every change. After any struct
+  or account-context change, the IDL must be rebuilt before fixes are trusted
+  on-chain.
+- **A hit is a lead, not a finding — and a clean read isn't either.** A grep
+  hit must be confirmed by reading the source before it's a finding.
+  Symmetrically, a passing fuzz run or a reassuring RPC read must be
+  confirmed — who holds the program's upgrade authority, cross-verified
+  against a second RPC — before it's a "no finding." Every conclusion carries
+  a confidence tier tied to its method (`PROVEN` formal verification / `TESTED`
+  fuzzing / `VERIFIED-LIVE` / `VERIFIED-SOURCE` / `INFERRED` / `UNKNOWN`); see
+  [`skill/daily-watch.md` §0](skill/daily-watch.md#0-verification-discipline--a-scientific-process-for-security-claims).
+  No complacent findings — a friendly-sounding conclusion earns its wording or
+  it doesn't ship.

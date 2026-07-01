@@ -1,7 +1,15 @@
 # Solana / Anchor vulnerability classes — detection checklist
 
 The bug classes worth re-verifying on every watch run. Each has: what it is, how
-to spot it (grep/read pattern), and the safe pattern.
+to spot it (grep/read pattern), and the safe pattern. A hit is a **lead, not a
+finding** — confirm by reading the source. The reverse also holds: finding the
+"safe pattern" present is not a clean bill of health until you've checked *who
+controls it* (e.g. is the check itself gated by an upgradeable program whose
+authority is a bare keypair?) and tagged the result with a confidence tier —
+see [`daily-watch.md` §0](daily-watch.md#0-verification-discipline--a-scientific-process-for-security-claims).
+A PDA-derivation check that exists but sits behind a program a single keypair
+can silently upgrade is not the same claim as one behind an immutable or
+multisig-gated program.
 
 ---
 
