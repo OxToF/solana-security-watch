@@ -12,34 +12,62 @@ security into a repeatable loop:
 > severity, `file:line`, and a *proposed* fix. Propose only — never auto-patch
 > production code.
 
-It ships an executable `/security-watch` command that scans a target Anchor repo
-for known vulnerability classes (account substitution, `init_if_needed` re-init,
+It ships an executable `/security-watch` command (and a `security-auditor`
+subagent for autonomous runs) that scans a target Anchor repo for known
+vulnerability classes (account substitution, `init_if_needed` re-init,
 rounding arbitrage, donation attacks, unbounded casts, governance capture, oracle
-manipulation, supply-chain risk) and emits a dated report.
+manipulation, supply-chain risk) and emits a dated report — backed, where a
+class has one, by a **runnable proof-of-concept** instead of just a grep
+pattern and a paragraph.
+
+**Related:** for cross-program-invocation vulnerabilities specifically (arbitrary
+CPI, return-data spoofing, stale account after CPI, PDA signing), see the
+sibling skill [`solana-cpi-safety-skill`](https://github.com/RECTOR-LABS/solana-cpi-safety-skill)
+— deep, CPI-only coverage with its own PoC suite. This skill stays broad
+(18 classes, continuous watch); install both, they don't overlap.
 
 ## What's inside
 
 ```
 solana-security-watch/
-├── SKILL.md                    # entry hub (progressive disclosure)
-├── skill/
-│   ├── daily-watch.md          # the collect → confront → report procedure + severity rubric
-│   ├── vuln-classes.md         # 18 Solana/Anchor bug classes with grep patterns + safe patterns
-│   └── case-studies.md         # anonymised real findings (HIGH/MEDIUM/LOW/INFO) for calibration
+├── skills/solana-security-watch/
+│   ├── SKILL.md                 # entry hub (progressive disclosure)
+│   ├── daily-watch.md           # the collect → confront → report procedure + severity rubric
+│   ├── vuln-classes.md          # 18 Solana/Anchor bug classes with grep patterns + safe patterns
+│   ├── case-studies.md          # anonymised real findings (HIGH/MEDIUM/LOW/INFO) for calibration
+│   └── poc-harness.md           # how the poc/ suites work + how to extend them
 ├── commands/
-│   └── security-watch.md       # executable slash command: deps + grep + advisories → report
+│   └── security-watch.md        # executable slash command: deps + grep + advisories → report
+├── agents/
+│   └── security-auditor.md      # read-only subagent running the same workflow autonomously
+├── poc/
+│   └── account-substitution/    # EXPLOIT/DEFENSE/POSITIVE CONTROL LiteSVM suite, class #1
+├── bin/cli.mjs                  # installer (global or --project)
 └── README.md
 ```
 
 ## Install
 
-**As a Claude Code skill** — drop this folder into your skills directory (e.g.
-`~/.claude/skills/solana-security-watch/`), or add it to the
-[Solana AI Kit](https://github.com/solanabr/solana-ai-kit) skill registry.
+One-line install (recommended) — full bundle (skill + `/security-watch` command
++ `security-auditor` agent), global (`~/.claude`):
 
-**As a slash command** — copy `commands/security-watch.md` to
-`~/.claude/commands/security-watch.md` (user-level) or
-`.claude/commands/security-watch.md` (project-level).
+```bash
+npx solana-security-watch
+# project-local instead: npx solana-security-watch --project
+```
+
+From a clone (runs the same installer locally):
+
+```bash
+git clone https://github.com/OxToF/solana-security-watch.git
+cd solana-security-watch
+node bin/cli.mjs                      # global (~/.claude)
+node bin/cli.mjs --project             # project-local: ./.claude
+node bin/cli.mjs --target <dir>        # custom base: installs <dir>/skills, <dir>/commands, <dir>/agents
+```
+
+Or add the skill to the [Solana AI Kit](https://github.com/solanabr/solana-ai-kit)
+skill registry.
 
 ## Use
 
@@ -48,8 +76,29 @@ solana-security-watch/
 /loop 1d /security-watch .        # self-paced daily watch
 ```
 
-Or point a scheduled agent / cron job at the command with the repo path as
-argument, appending each run to the repo's `SECURITY_WATCH.md` journal.
+Or invoke the `security-auditor` subagent directly for the same workflow run
+autonomously, or point a scheduled agent / cron job at the command with the
+repo path as argument, appending each run to the repo's `SECURITY_WATCH.md`
+journal.
+
+## Proof, not just prose
+
+For class #1 (account substitution — the highest-yield surface per the
+checklist), [`poc/account-substitution/`](poc/account-substitution/) ships a
+compiled Anchor program with a vulnerable/fixed instruction pair and a LiteSVM
+test suite:
+
+```bash
+cd poc/account-substitution
+yarn && yarn test      # 3 passing in ~20ms — no validator, no rebuild required
+```
+
+It proves, with an actual transaction rather than a read of the source, that a
+forged account bypasses the vulnerable instruction and is rejected —
+specifically on Anchor's `AccountOwnedByWrongProgram` check, not some
+unrelated failure — by the fixed one. See
+[`poc-harness.md`](skills/solana-security-watch/poc-harness.md) for the
+EXPLOIT/DEFENSE/POSITIVE CONTROL pattern and how to extend it to the next class.
 
 ## Demo — a real watch pass
 
@@ -88,7 +137,7 @@ findings below are by-design, used to validate detection coverage).
 #### Step 2 — Risky-pattern grep → triaged findings
 
 The grep flags *leads*; each was confirmed by reading the source. Mapping to the
-skill's [`vuln-classes.md`](skill/vuln-classes.md):
+skill's [`vuln-classes.md`](skills/solana-security-watch/vuln-classes.md):
 
 | # | Program (`insecure` variant) | Class | Surface | Severity |
 |---|---|---|---|---|
@@ -117,7 +166,7 @@ correctly passed.
 This pass surfaced four canonical Solana classes **missing** from the checklist at
 the time — arbitrary CPI, account closing/revival, duplicate mutable accounts, and
 bump-seed canonicalization. They were added as classes **#15–#18** in
-[`vuln-classes.md`](skill/vuln-classes.md). That is the watch loop working as
+[`vuln-classes.md`](skills/solana-security-watch/vuln-classes.md). That is the watch loop working as
 intended: each pass can harden the skill itself, not only the target.
 
 ---

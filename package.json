@@ -1,0 +1,39 @@
+{
+  "name": "solana-security-watch",
+  "version": "1.0.0",
+  "description": "Continuous security monitoring for Solana/Anchor programs — a Claude Code skill, /security-watch command, and security-auditor agent.",
+  "license": "MIT",
+  "author": "OxToF",
+  "type": "module",
+  "bin": {
+    "solana-security-watch": "bin/cli.mjs"
+  },
+  "files": [
+    "bin",
+    "skills",
+    "commands",
+    "agents",
+    "poc/account-substitution/programs",
+    "poc/account-substitution/tests",
+    "poc/account-substitution/target/deploy",
+    "poc/account-substitution/target/idl",
+    "poc/account-substitution/Anchor.toml",
+    "poc/account-substitution/Cargo.toml",
+    "poc/account-substitution/package.json",
+    "poc/account-substitution/tsconfig.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/OxToF/solana-security-watch.git"
+  },
+  "keywords": [
+    "solana",
+    "anchor",
+    "security",
+    "audit",
+    "claude-code",
+    "claude-code-skill"
+  ]
+}

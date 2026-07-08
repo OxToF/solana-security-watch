@@ -20,6 +20,16 @@ target/
 .anchor/
 test-ledger/
 
+# ...but the PoC's compiled program + IDL are committed on purpose so the suite
+# runs standalone (`yarn && yarn test`, no `anchor build` needed). The program
+# keypair stays ignored (OPSEC rule above) — it isn't needed to run the tests.
+!poc/*/target/
+poc/*/target/*
+!poc/*/target/deploy/
+poc/*/target/deploy/*
+!poc/*/target/deploy/*.so
+!poc/*/target/idl/
+
 # Rust
 Cargo.lock.bak
 **/*.rs.bk

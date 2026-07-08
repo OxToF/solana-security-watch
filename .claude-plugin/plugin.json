@@ -1,0 +1,8 @@
+{
+  "name": "solana-security-watch",
+  "description": "Continuous security monitoring for Solana/Anchor programs: an 18-class vulnerability checklist, a confidence-tiered daily watch loop, an executable /security-watch command, a security-auditor agent, and a runnable PoC harness.",
+  "version": "1.0.0",
+  "author": { "name": "OxToF", "url": "https://github.com/OxToF" },
+  "repository": "https://github.com/OxToF/solana-security-watch",
+  "license": "MIT"
+}

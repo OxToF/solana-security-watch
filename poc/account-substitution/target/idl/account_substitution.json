@@ -1,0 +1,143 @@
+{
+  "address": "EnhLFLMZAYgVFr2gSeNWuWUCimsMkeaxakNXbPHfdimX",
+  "metadata": {
+    "name": "account_substitution",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "init_vesting",
+      "discriminator": [
+        119,
+        192,
+        67,
+        41,
+        47,
+        82,
+        152,
+        27
+      ],
+      "accounts": [
+        {
+          "name": "vesting",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "locked",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "unstake_insecure",
+      "docs": [
+        "VULNERABLE: `vesting` is `UncheckedAccount` — no owner check, no PDA",
+        "re-derivation. Bytes are read at fixed offsets after the 8-byte Anchor",
+        "discriminator: owner(32) | locked(8) | claimed(8)."
+      ],
+      "discriminator": [
+        38,
+        65,
+        44,
+        7,
+        145,
+        116,
+        145,
+        121
+      ],
+      "accounts": [
+        {
+          "name": "vesting"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "unstake_secure",
+      "docs": [
+        "FIXED: `vesting` is `Account<'info, VestingState>`. Anchor deserializes via",
+        "the typed discriminator and rejects any account not owned by this program",
+        "before the handler body runs — a forged account never reaches the require!."
+      ],
+      "discriminator": [
+        110,
+        206,
+        173,
+        109,
+        50,
+        235,
+        228,
+        107
+      ],
+      "accounts": [
+        {
+          "name": "vesting"
+        }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "VestingState",
+      "discriminator": [
+        225,
+        34,
+        190,
+        79,
+        98,
+        226,
+        144,
+        101
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "MalformedAccount",
+      "msg": "account too small to hold VestingState"
+    },
+    {
+      "code": 6001,
+      "name": "StillLocked",
+      "msg": "vesting is still locked"
+    }
+  ],
+  "types": [
+    {
+      "name": "VestingState",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "locked",
+            "type": "u64"
+          },
+          {
+            "name": "claimed",
+            "type": "u64"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -10,15 +10,15 @@ Run one watch pass over the Anchor program at `$ARGUMENTS` (default: current
 directory). Produce a dated report; **propose** fixes, never auto-apply.
 
 **Verification discipline applies to every step below** — see
-[`skill/daily-watch.md` §0](../skill/daily-watch.md#0-verification-discipline--a-scientific-process-for-security-claims).
+[`daily-watch.md` §0](../skills/solana-security-watch/daily-watch.md#0-verification-discipline--a-scientific-process-for-security-claims).
 No conclusion, positive or negative, ships without a confidence tier
 (`PROVEN` / `TESTED` / `VERIFIED-LIVE` / `VERIFIED-SOURCE` / `INFERRED` /
 `UNKNOWN`). A grep exiting clean, or an RPC call returning the expected value,
 is a lead — it becomes a finding (including a "no finding") only once the
 method, evidence, and refutation attempt behind it are written out.
 
-Follow the steps in order. Use [`skill/vuln-classes.md`](../skill/vuln-classes.md)
-for the detection patterns and [`skill/daily-watch.md`](../skill/daily-watch.md)
+Follow the steps in order. Use [`vuln-classes.md`](../skills/solana-security-watch/vuln-classes.md)
+for the detection patterns and [`daily-watch.md`](../skills/solana-security-watch/daily-watch.md)
 for the severity rubric and confidence tiers.
 
 ## Step 1 — Dependency scan
@@ -87,6 +87,13 @@ in the report:
    explicitly that `PROVEN` wasn't attempted. Account-substitution / CPI /
    PDA / governance classes (#1, #3, #10, #15, #16, #18) are not `PROVEN`-
    tractable today — cap at `TESTED`/`VERIFIED-SOURCE`.
+3. **Runnable evidence, where a PoC exists** — for class #1 (account
+   substitution), a working exploit/defense harness ships at
+   [`../poc/account-substitution/`](../poc/account-substitution/) (see
+   [`poc-harness.md`](../skills/solana-security-watch/poc-harness.md)). If the
+   target's bug shape matches the harness's pattern, adapt and run it instead
+   of resting on a manual read — that's the difference between
+   `VERIFIED-SOURCE` and `TESTED`.
 
 Skipping this step is how "the check is present" quietly becomes "there's no
 hole" — a false negative that reads like a clean audit.
@@ -94,7 +101,7 @@ hole" — a false negative that reads like a clean audit.
 ## Step 3 — Fresh advisories (WebSearch)
 
 Search the last 48h across Solana/Anchor/DeFi disclosures (terms in
-`skill/daily-watch.md`). For each new technique, ask: does any surface in this repo
+`skills/solana-security-watch/daily-watch.md`). For each new technique, ask: does any surface in this repo
 match? Confirm or rule out by reading the relevant code.
 
 ## Step 4 — Emit the report

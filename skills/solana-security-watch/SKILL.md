@@ -35,21 +35,32 @@ This skill encodes a repeatable daily loop:
 This skill complements one-shot audit skills (e.g. Trail of Bits-style review):
 use those for depth on a frozen snapshot, use this to stay current over time.
 
+**CPI is a separate, deeper surface.** For classes #15 (arbitrary CPI) and the
+CPI-adjacent parts of #16 (stale account after CPI), reach for
+[`solana-cpi-safety-skill`](https://github.com/RECTOR-LABS/solana-cpi-safety-skill)
+instead — a sibling skill purpose-built for return-data spoofing, arbitrary
+CPI, stale-account-after-CPI, and PDA signing, with its own runnable PoC suite.
+This skill stays broad (18 classes, continuous watch); that one goes deep on
+one high-severity surface. Install both; they don't overlap in scope.
+
 ## How it's organised (progressive disclosure)
 
 Load only the file you need for the task at hand:
 
 | File | Load it when… |
 |---|---|
-| [`skill/daily-watch.md`](skill/daily-watch.md) | Running the watch loop — the collect/confront/report procedure, verification discipline (§0: confidence tiers, toolchain), and source list. |
-| [`skill/vuln-classes.md`](skill/vuln-classes.md) | Confronting code against bug classes — the Anchor/SPL checklist with detection patterns. |
-| [`skill/case-studies.md`](skill/case-studies.md) | You want worked examples of real findings (anonymised) to calibrate severity and format. |
-| [`commands/security-watch.md`](commands/security-watch.md) | You want the mechanical scan: deps + grep + advisory search → report. |
+| [`daily-watch.md`](daily-watch.md) | Running the watch loop — the collect/confront/report procedure, verification discipline (§0: confidence tiers, toolchain), and source list. |
+| [`vuln-classes.md`](vuln-classes.md) | Confronting code against bug classes — the Anchor/SPL checklist with detection patterns. |
+| [`case-studies.md`](case-studies.md) | You want worked examples of real findings (anonymised) to calibrate severity and format. |
+| [`poc-harness.md`](poc-harness.md) | You want runnable proof (not just a grep pattern) that a class is real and that the fix works — [`poc/`](../../poc/) ships EXPLOIT/DEFENSE/POSITIVE CONTROL test suites. |
+| [`../../commands/security-watch.md`](../../commands/security-watch.md) | You want the mechanical scan: deps + grep + advisory search → report. |
+| [`../../agents/security-auditor.md`](../../agents/security-auditor.md) | You want a dedicated read-only subagent to run the full audit workflow autonomously. |
 
-## The executable command
+## The executable command and agent
 
 Install `commands/security-watch.md` as a Claude Code slash command and run
-`/security-watch [path-to-anchor-repo]`. It will:
+`/security-watch [path-to-anchor-repo]`, or invoke the `security-auditor`
+subagent for the same workflow run autonomously. Either will:
 
 1. **Scan dependencies** — parse `Cargo.lock`, cross-check `anchor-lang` /
    `anchor-spl` and transitive crates against RUSTSEC, flag missing
@@ -76,6 +87,9 @@ Install `commands/security-watch.md` as a Claude Code slash command and run
   against a second RPC — before it's a "no finding." Every conclusion carries
   a confidence tier tied to its method (`PROVEN` formal verification / `TESTED`
   fuzzing / `VERIFIED-LIVE` / `VERIFIED-SOURCE` / `INFERRED` / `UNKNOWN`); see
-  [`skill/daily-watch.md` §0](skill/daily-watch.md#0-verification-discipline--a-scientific-process-for-security-claims).
+  [`daily-watch.md` §0](daily-watch.md#0-verification-discipline--a-scientific-process-for-security-claims).
   No complacent findings — a friendly-sounding conclusion earns its wording or
   it doesn't ship.
+- **Claims can be backed by a runnable artifact, not just prose.** Where a
+  [`poc/`](../../poc/) harness exists for a class, a `TESTED`-tier claim should
+  point at it — see [`poc-harness.md`](poc-harness.md).
