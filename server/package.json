@@ -1,0 +1,11 @@
+{
+  "name": "solana-security-watch-server",
+  "version": "0.1.0",
+  "description": "Payment-agnostic scan backend for the solana-security-watch funnel.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "engines": { "node": ">=18" }
+}

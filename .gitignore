@@ -51,3 +51,7 @@ watch-reports/
 # Local scan runner output (committed samples live in examples/)
 scan-out/
 .preview/
+
+# scan backend runtime state
+server/data/
+server/deliveries/
