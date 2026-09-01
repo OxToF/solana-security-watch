@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Solana Security Watch, scan de sécurité pour programmes Solana</title>
+<title>Solana Security Watch: security scanning for Solana and Anchor programs</title>
 <style>
   :root{
     --bg:#0b0b16; --bg2:#12122a; --card:#171733; --line:#262648;
@@ -23,7 +23,7 @@
   .hero h1{font-size:2.5rem;line-height:1.12;margin:0 0 14px}
   .hero h1 em{font-style:normal;background:linear-gradient(90deg,var(--accent),var(--accent2));
     -webkit-background-clip:text;background-clip:text;color:transparent}
-  .hero p.sub{font-size:1.15rem;color:var(--muted);max-width:640px;margin:0 auto 26px}
+  .hero p.sub{font-size:1.15rem;color:var(--muted);max-width:660px;margin:0 auto 26px}
   .scanbox{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
     padding:18px;max-width:620px;margin:0 auto;box-shadow:0 20px 60px rgba(0,0,0,.35)}
   .scanbox .row{display:flex;gap:10px;flex-wrap:wrap}
@@ -67,85 +67,85 @@
   <header>
     <div class="brand">Solana <span>Security Watch</span></div>
     <nav class="nav">
-      <a href="#offres">Offres</a>
-      <a href="#preuve">Preuve</a>
+      <a href="#offers">Offers</a>
+      <a href="#proof">Proof</a>
       <a href="https://github.com/OxToF/solana-security-watch">GitHub</a>
     </nav>
   </header>
 
   <div class="hero">
-    <h1>Durcissez votre programme Solana <em>avant</em> qu'on ne le fasse pour vous</h1>
-    <p class="sub">Collez votre dépôt public. On confronte vos dépendances aux advisories RustSec et OSV sur vos versions exactes, et votre code aux 18 classes de vulnérabilités Solana et Anchor. Rapport daté, sévérité, fichier et ligne.</p>
+    <h1>Harden your Solana program <em>before</em> someone else does</h1>
+    <p class="sub">Paste your public repo. We check your dependencies against RustSec and OSV advisories on your exact pinned versions, and your code against 18 Solana and Anchor vulnerability classes. Dated report, severity, file and line.</p>
 
     <form class="scanbox" id="scanForm">
       <div class="row">
-        <input id="repo" type="url" placeholder="https://github.com/votre-org/votre-repo" required>
-        <input id="email" type="email" placeholder="vous@exemple.com" required>
-        <button class="btn" type="submit">Lancer le scan</button>
+        <input id="repo" type="url" placeholder="https://github.com/your-org/your-repo" required>
+        <input id="email" type="email" placeholder="you@example.com" required>
+        <button class="btn" type="submit">Run the scan</button>
       </div>
-      <div class="price">Scan à la demande, <b>80 $</b>. Dépôt public. Livré rapidement.</div>
+      <div class="price">On-demand scan, <b>$80</b>. Public repo. Delivered fast.</div>
       <div class="msg" id="msg"></div>
-      <div class="hint">Aucune installation. On ne clone que du code public, jamais vos secrets.</div>
+      <div class="hint">No install. We only clone public code, never your secrets.</div>
     </form>
   </div>
 
-  <section id="comment">
-    <h2>Comment ça marche</h2>
+  <section id="how">
+    <h2>How it works</h2>
     <div class="steps">
-      <div class="step"><div class="n">01</div><h3>Vous collez le dépôt</h3><p>Une URL GitHub publique. Rien à installer, rien à connecter.</p></div>
-      <div class="step"><div class="n">02</div><h3>On scanne</h3><p>Advisories sur vos versions épinglées, hygiène de build, et leads de code par classe de vulnérabilité.</p></div>
-      <div class="step"><div class="n">03</div><h3>Vous recevez le rapport</h3><p>Un document clair et daté, avec sévérité, emplacement, et pistes de correction.</p></div>
+      <div class="step"><div class="n">01</div><h3>You paste the repo</h3><p>A public GitHub URL. Nothing to install, nothing to connect.</p></div>
+      <div class="step"><div class="n">02</div><h3>We scan</h3><p>Advisories on your pinned versions, build hygiene, and code leads by vulnerability class.</p></div>
+      <div class="step"><div class="n">03</div><h3>You get the report</h3><p>A clear, dated document with severity, location, and fix pointers.</p></div>
     </div>
   </section>
 
-  <section id="offres">
-    <h2>Deux façons de travailler ensemble</h2>
+  <section id="offers">
+    <h2>Two ways to work together</h2>
     <div class="offers">
       <div class="offer mark">
-        <div class="tag">À LA DEMANDE</div>
-        <h3>Le scan</h3>
-        <div class="p">80 $ <small>par scan</small></div>
+        <div class="tag">ON DEMAND</div>
+        <h3>The scan</h3>
+        <div class="p">$80 <small>per scan</small></div>
         <ul>
-          <li>Advisories RustSec et OSV sur vos versions exactes</li>
-          <li>Hygiène de build (overflow-checks, version Anchor)</li>
-          <li>Leads de code mappés aux 18 classes connues</li>
-          <li>Rapport daté, sévérité et fichier:ligne</li>
+          <li>RustSec and OSV advisories on your exact versions</li>
+          <li>Build hygiene (overflow-checks, Anchor version)</li>
+          <li>Code leads mapped to the 18 known classes</li>
+          <li>Dated report, severity and file:line</li>
         </ul>
-        <a class="btn" href="#scanForm" onclick="document.getElementById('repo').focus()">Lancer un scan</a>
+        <a class="btn" href="#scanForm" onclick="document.getElementById('repo').focus()">Run a scan</a>
       </div>
       <div class="offer">
-        <div class="tag">EN CONTINU</div>
-        <h3>La veille</h3>
-        <div class="p">sur devis <small>par mois</small></div>
+        <div class="tag">CONTINUOUS</div>
+        <h3>The watch</h3>
+        <div class="p">custom <small>per month</small></div>
         <ul>
-          <li>Surveillance quotidienne de votre arbre de dépendances</li>
-          <li>Passe humaine à chaque nouveau code mergé</li>
-          <li>Rapport privé et canal d'alerte dédié</li>
-          <li>Prévenu le jour d'une faille, pas dans un post mortem</li>
+          <li>Daily monitoring of your dependency tree</li>
+          <li>Human pass on every newly merged commit</li>
+          <li>Private report and a dedicated alert channel</li>
+          <li>Alerted the day a flaw lands, not later in a post mortem</li>
         </ul>
-        <a class="btn ghost" id="veilleBtn" href="mailto:CONTACT@EXEMPLE.COM?subject=Veille%20continue%20Solana">Discuter de la veille</a>
+        <a class="btn ghost" id="veilleBtn" href="mailto:CONTACT@EXAMPLE.COM?subject=Continuous%20Solana%20security%20watch">Talk about the watch</a>
       </div>
     </div>
   </section>
 
   <section>
     <div class="scope">
-      <strong>Ce que ce n'est pas.</strong> Un audit complet ne se remplace pas. Ce service détecte les classes de failles connues et les problèmes de dépendances, il ne certifie pas l'absence de tout bug. C'est une première ligne de défense, pas une garantie.
+      <strong>What this is not.</strong> A full audit is not replaceable. This service detects known vulnerability classes and dependency issues, it does not certify the absence of bugs. It is a first line of defense, not a guarantee.
     </div>
   </section>
 
-  <section id="preuve" class="proof">
-    <h2>La preuve avant la promesse</h2>
-    <p>Chaque classe couverte est adossée à une preuve exécutable, pas à un paragraphe. Tout est public, vous vérifiez avant de payer.</p>
+  <section id="proof" class="proof">
+    <h2>Proof before promise</h2>
+    <p>Every class we cover is backed by an executable proof, not a paragraph. Everything is public, so you can verify before you pay.</p>
     <ul>
-      <li><a href="../examples/sample-scan-report.html">Voir un rapport de scan d'exemple</a></li>
-      <li><a href="../examples/watch-orca-whirlpools-2026-09-01.md">Voir une passe de veille sur un vrai protocole</a></li>
-      <li><a href="https://github.com/OxToF/solana-security-watch">Le référentiel open source (5 preuves exécutables, 18 classes)</a></li>
+      <li><a href="https://github.com/OxToF/solana-security-watch/blob/main/examples/sample-scan-report.html">See a sample scan report</a></li>
+      <li><a href="https://github.com/OxToF/solana-security-watch/blob/main/examples/watch-orca-whirlpools-2026-09-01.md">See a watch pass on a real protocol</a></li>
+      <li><a href="https://github.com/OxToF/solana-security-watch">The open source toolkit (5 executable proofs, 18 classes)</a></li>
     </ul>
   </section>
 
   <footer>
-    Solana Security Watch. Outil open source sous licence MIT. Le scan est une aide au durcissement, pas un audit certifié.
+    Solana Security Watch. Open source under the MIT license. The scan is a hardening aid, not a certified audit.
   </footer>
 </div>
 
@@ -155,9 +155,9 @@
   // if one is configured, else fall back to a prefilled email. No backend needed
   // to start collecting leads.
   var ENDPOINT = window.SSW_ENDPOINT || null;   // set to your serverless URL when ready
-  var CONTACT  = window.SSW_CONTACT  || "CONTACT@EXEMPLE.COM";
+  var CONTACT  = window.SSW_CONTACT  || "CONTACT@EXAMPLE.COM";
   var veille = document.getElementById("veilleBtn");
-  if (veille) veille.href = "mailto:" + CONTACT + "?subject=" + encodeURIComponent("Veille continue Solana");
+  if (veille) veille.href = "mailto:" + CONTACT + "?subject=" + encodeURIComponent("Continuous Solana security watch");
   var form = document.getElementById("scanForm");
   var msg = document.getElementById("msg");
   form.addEventListener("submit", function (e) {
@@ -166,19 +166,19 @@
     var repo = document.getElementById("repo").value.trim();
     var email = document.getElementById("email").value.trim();
     var ok = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/.test(repo);
-    if (!ok) { msg.className = "msg err"; msg.textContent = "Entrez une URL https://github.com/org/repo valide (dépôt public)."; return; }
+    if (!ok) { msg.className = "msg err"; msg.textContent = "Enter a valid https://github.com/org/repo URL (public repo)."; return; }
     if (ENDPOINT) {
-      msg.className = "msg"; msg.textContent = "Envoi...";
+      msg.className = "msg"; msg.textContent = "Sending...";
       fetch(ENDPOINT, { method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ repo: repo, email: email }) })
         .then(function (r) { if (!r.ok) throw new Error(); msg.className = "msg ok";
-          msg.textContent = "Reçu. Votre rapport arrive par email."; form.reset(); })
-        .catch(function () { msg.className = "msg err"; msg.textContent = "Erreur d'envoi. Réessayez ou écrivez-nous."; });
+          msg.textContent = "Got it. Your report is on its way by email."; form.reset(); })
+        .catch(function () { msg.className = "msg err"; msg.textContent = "Something went wrong. Please retry or email us."; });
     } else {
-      var subject = encodeURIComponent("Scan Solana Security Watch pour " + repo);
-      var body = encodeURIComponent("Dépôt à scanner: " + repo + "\nEmail: " + email + "\n");
+      var subject = encodeURIComponent("Solana Security Watch scan for " + repo);
+      var body = encodeURIComponent("Repo to scan: " + repo + "\nEmail: " + email + "\n");
       window.location.href = "mailto:" + CONTACT + "?subject=" + subject + "&body=" + body;
-      msg.className = "msg ok"; msg.textContent = "Votre client email va s'ouvrir pour finaliser la demande.";
+      msg.className = "msg ok"; msg.textContent = "Your email client will open to finish the request.";
     }
   });
 </script>
