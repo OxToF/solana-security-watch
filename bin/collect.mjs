@@ -21,11 +21,16 @@ export const DEFAULT_CRATES = [
 
 const OSV_QUERY = "https://api.osv.dev/v1/query";
 
-async function queryCrate(name, fetchImpl) {
+// Query OSV for a crate. Pass `version` to get only advisories that affect that
+// exact pinned version (used by the per-repo scanner); omit it for all advisories
+// on the crate (used by the ecosystem watch).
+export async function queryCrate(name, fetchImpl, version) {
+  const query = { package: { ecosystem: "crates.io", name } };
+  if (version) query.version = version;
   const res = await fetchImpl(OSV_QUERY, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ package: { ecosystem: "crates.io", name } }),
+    body: JSON.stringify(query),
   });
   if (!res.ok) throw new Error(`OSV ${res.status} for ${name}`);
   const body = await res.json();

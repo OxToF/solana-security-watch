@@ -1,0 +1,72 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Scan — local/whirlpools</title>
+<style>
+:root{--fg:#1a1a2e;--muted:#6b7280;--bg:#fff;--card:#f7f7fb;--line:#e5e7eb}
+body{font:15px/1.55 -apple-system,Segoe UI,Roboto,sans-serif;color:var(--fg);background:var(--bg);margin:0;padding:2rem;max-width:820px;margin:auto}
+h1{font-size:1.5rem;margin:0 0 .2rem} h2{font-size:1.15rem;margin:2rem 0 .6rem;border-bottom:1px solid var(--line);padding-bottom:.3rem}
+.meta{color:var(--muted);font-size:.9rem} .note{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:.8rem 1rem;margin:1rem 0;font-size:.92rem}
+table{width:100%;border-collapse:collapse;margin:.5rem 0} td,th{text-align:left;padding:.45rem .5rem;border-bottom:1px solid var(--line);vertical-align:top}
+.sev{color:#fff;border-radius:5px;padding:.1rem .45rem;font-size:.72rem;font-weight:700;white-space:nowrap}
+.muted{color:var(--muted);font-size:.82rem} .ok{color:#0a7d33} code{background:var(--card);padding:.05rem .3rem;border-radius:4px;font-size:.85em}
+footer{margin-top:2.5rem;color:var(--muted);font-size:.85rem;border-top:1px solid var(--line);padding-top:1rem}
+</style></head><body>
+<h1>Security scan — local/whirlpools</h1>
+<div class="meta">Scanned 2026-09-01 · 384 Rust source files · <a href="https://github.com/local/whirlpools">repo</a></div>
+<div class="note"><strong>A hygiene + known-class scan, not an audit.</strong> Dependency advisories are matched against your exact pinned versions. Code items are leads to confirm by reading, not confirmed vulnerabilities. This scan does not certify the absence of bugs.</div>
+<h2>1. Dependency advisories (your pinned versions)</h2>
+<table><tr><th>Sev</th><th>ID</th><th>Summary</th></tr><tr><td><span class="sev" style="background:#d1440a">HIGH</span></td>
+         <td><a href="https://rustsec.org/advisories/RUSTSEC-2026-0104.html">RUSTSEC-2026-0104</a><div class="muted">rustls-webpki 0.101.7, rustls-webpki 0.103.8</div></td>
+         <td>rustls-webpki: Denial of service via panic on malformed CRL BIT STRING</td></tr><tr><td><span class="sev" style="background:#b8860b">MODERATE</span></td>
+         <td><a href="https://osv.dev/vulnerability/GHSA-7gcf-g7xr-8hxj">GHSA-7gcf-g7xr-8hxj</a><div class="muted">serde_with 2.3.3, serde_with 3.12.0, serde_with 3.15.1, serde_with 3.16.0</div></td>
+         <td>serde_with: KeyValueMap serialization panics on empty sequence or map entries</td></tr><tr><td><span class="sev" style="background:#b8860b">MODERATE</span></td>
+         <td><a href="https://rustsec.org/advisories/RUSTSEC-2022-0093.html">RUSTSEC-2022-0093</a><div class="muted">ed25519-dalek 1.0.1</div></td>
+         <td>`ed25519-dalek` Double Public Key Signing Function Oracle Attack</td></tr><tr><td><span class="sev" style="background:#b8860b">MODERATE</span></td>
+         <td><a href="https://rustsec.org/advisories/RUSTSEC-2023-0033.html">RUSTSEC-2023-0033</a><div class="muted">borsh 0.10.4</div></td>
+         <td>Parsing borsh messages with ZST which are not-copy/clone is unsound</td></tr><tr><td><span class="sev" style="background:#b8860b">MODERATE</span></td>
+         <td><a href="https://rustsec.org/advisories/RUSTSEC-2026-0007.html">RUSTSEC-2026-0007</a><div class="muted">bytes 1.10.0</div></td>
+         <td>bytes has integer overflow in BytesMut::reserve</td></tr><tr><td><span class="sev" style="background:#b8860b">MODERATE</span></td>
+         <td><a href="https://rustsec.org/advisories/RUSTSEC-2026-0009.html">RUSTSEC-2026-0009</a><div class="muted">time 0.3.37</div></td>
+         <td>time vulnerable to stack exhaustion Denial of Service attack</td></tr><tr><td><span class="sev" style="background:#b8860b">MODERATE</span></td>
+         <td><a href="https://rustsec.org/advisories/RUSTSEC-2026-0049.html">RUSTSEC-2026-0049</a><div class="muted">rustls-webpki 0.103.8</div></td>
+         <td>webpki: CRLs not considered authoritative by Distribution Point due to faulty matching logic</td></tr><tr><td><span class="sev" style="background:#555">LOW</span></td>
+         <td><a href="https://rustsec.org/advisories/RUSTSEC-2024-0344.html">RUSTSEC-2024-0344</a><div class="muted">curve25519-dalek 3.2.0</div></td>
+         <td>curve25519-dalek has timing variability in `curve25519-dalek`'s `Scalar29::sub`/`Scalar52::sub`</td></tr><tr><td><span class="sev" style="background:#555">LOW</span></td>
+         <td><a href="https://rustsec.org/advisories/RUSTSEC-2026-0012.html">RUSTSEC-2026-0012</a><div class="muted">keccak 0.1.5</div></td>
+         <td>Unsoundness in opt-in ARMv8 assembly backend for `keccak`</td></tr><tr><td><span class="sev" style="background:#555">LOW</span></td>
+         <td><a href="https://rustsec.org/advisories/RUSTSEC-2026-0097.html">RUSTSEC-2026-0097</a><div class="muted">rand 0.7.3, rand 0.8.5, rand 0.9.2</div></td>
+         <td>Rand is unsound with a custom logger using rand::rng()</td></tr><tr><td><span class="sev" style="background:#555">LOW</span></td>
+         <td><a href="https://rustsec.org/advisories/RUSTSEC-2026-0098.html">RUSTSEC-2026-0098</a><div class="muted">rustls-webpki 0.101.7, rustls-webpki 0.103.8</div></td>
+         <td>webpki: Name constraints for URI names were incorrectly accepted</td></tr><tr><td><span class="sev" style="background:#555">LOW</span></td>
+         <td><a href="https://rustsec.org/advisories/RUSTSEC-2026-0099.html">RUSTSEC-2026-0099</a><div class="muted">rustls-webpki 0.101.7, rustls-webpki 0.103.8</div></td>
+         <td>webpki: Name constraints were accepted for certificates asserting a wildcard name</td></tr><tr><td><span class="sev" style="background:#555">UNSPECIFIED</span></td>
+         <td><a href="https://rustsec.org/advisories/RUSTSEC-2021-0139.html">RUSTSEC-2021-0139</a><div class="muted">ansi_term 0.12.1</div></td>
+         <td>ansi_term is Unmaintained</td></tr><tr><td><span class="sev" style="background:#555">UNSPECIFIED</span></td>
+         <td><a href="https://rustsec.org/advisories/RUSTSEC-2021-0141.html">RUSTSEC-2021-0141</a><div class="muted">dotenv 0.15.0</div></td>
+         <td>dotenv is Unmaintained</td></tr><tr><td><span class="sev" style="background:#555">UNSPECIFIED</span></td>
+         <td><a href="https://rustsec.org/advisories/RUSTSEC-2024-0388.html">RUSTSEC-2024-0388</a><div class="muted">derivative 2.2.0</div></td>
+         <td>`derivative` is unmaintained; consider using an alternative</td></tr><tr><td><span class="sev" style="background:#555">UNSPECIFIED</span></td>
+         <td><a href="https://rustsec.org/advisories/RUSTSEC-2024-0436.html">RUSTSEC-2024-0436</a><div class="muted">paste 1.0.15</div></td>
+         <td>paste - no longer maintained</td></tr><tr><td><span class="sev" style="background:#555">UNSPECIFIED</span></td>
+         <td><a href="https://rustsec.org/advisories/RUSTSEC-2025-0141.html">RUSTSEC-2025-0141</a><div class="muted">bincode 1.3.3</div></td>
+         <td>Bincode is unmaintained</td></tr><tr><td><span class="sev" style="background:#555">UNSPECIFIED</span></td>
+         <td><a href="https://rustsec.org/advisories/RUSTSEC-2025-0161.html">RUSTSEC-2025-0161</a><div class="muted">libsecp256k1 0.6.0</div></td>
+         <td>libsecp256k1 is unmaintained</td></tr><tr><td><span class="sev" style="background:#555">UNSPECIFIED</span></td>
+         <td><a href="https://rustsec.org/advisories/RUSTSEC-2026-0186.html">RUSTSEC-2026-0186</a><div class="muted">memmap2 0.5.10</div></td>
+         <td>Unchecked pointer offset in crate `memmap2`</td></tr><tr><td><span class="sev" style="background:#555">UNSPECIFIED</span></td>
+         <td><a href="https://rustsec.org/advisories/RUSTSEC-2026-0190.html">RUSTSEC-2026-0190</a><div class="muted">anyhow 1.0.100</div></td>
+         <td>Unsoundness in `Error::downcast_mut()`</td></tr><tr><td><span class="sev" style="background:#555">UNSPECIFIED</span></td>
+         <td><a href="https://rustsec.org/advisories/RUSTSEC-2026-0204.html">RUSTSEC-2026-0204</a><div class="muted">crossbeam-epoch 0.9.18</div></td>
+         <td>Invalid pointer dereference in `fmt::Pointer` impl for `Atomic` and `Shared` when the underlying pointer is invalid</td></tr><tr><td><span class="sev" style="background:#555">UNSPECIFIED</span></td>
+         <td><a href="https://rustsec.org/advisories/RUSTSEC-2026-0205.html">RUSTSEC-2026-0205</a><div class="muted">scc 2.3.3</div></td>
+         <td>`Array::insert` violates exception safety if compare function panics, leading to potential Double-Free</td></tr><tr><td><span class="sev" style="background:#555">UNSPECIFIED</span></td>
+         <td><a href="https://rustsec.org/advisories/RUSTSEC-2026-0221.html">RUSTSEC-2026-0221</a><div class="muted">event-listener 5.4.0, event-listener 5.4.1</div></td>
+         <td>`event-listener` allows `!Send` tags to cross thread boundaries via `StackSlot`</td></tr></table>
+<h2>2. Build hygiene</h2>
+<table>
+<tr><td><code>overflow-checks</code> (release)</td><td><b style="color:#d1440a">false — enable (class #7)</b></td></tr>
+<tr><td><code>anchor-lang</code></td><td>0.32.1</td></tr>
+</table>
+<h2>3. Code leads by class</h2>
+<table><tr><th>Class</th><th>Lead</th><th>Hits</th></tr><tr><td>#15</td><td>CPI (invoke / invoke_signed)</td><td>508</td></tr><tr><td>#13</td><td>Token-2022 / TokenInterface</td><td>119</td></tr><tr><td>#1</td><td>account substitution / unchecked account</td><td>95</td></tr><tr><td>#3</td><td>manual byte deserialisation</td><td>47</td></tr><tr><td>#4</td><td>rounding direction (ceil div)</td><td>3</td></tr><tr><td>#2</td><td>init_if_needed re-initialisation</td><td>1</td></tr></table>
+<footer>Generated by <a href="https://github.com/OxToF/solana-security-watch">solana-security-watch</a>. Want continuous coverage instead of a snapshot? Ask about the monthly watch.</footer>
+</body></html>

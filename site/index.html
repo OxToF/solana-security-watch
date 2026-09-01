@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solana Security Watch, scan de sécurité pour programmes Solana</title>
+<style>
+  :root{
+    --bg:#0b0b16; --bg2:#12122a; --card:#171733; --line:#262648;
+    --fg:#eef0ff; --muted:#a2a6c8; --accent:#8b5cf6; --accent2:#22d3a6; --danger:#ff6b6b;
+    --radius:14px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 70% -10%, #1b1b3d 0%, var(--bg) 55%);
+    color:var(--fg);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  a{color:var(--accent2);text-decoration:none} a:hover{text-decoration:underline}
+  .wrap{max-width:960px;margin:0 auto;padding:0 20px}
+  header{padding:22px 0;display:flex;align-items:center;justify-content:space-between}
+  .brand{font-weight:800;letter-spacing:.2px}
+  .brand span{color:var(--accent2)}
+  .nav a{color:var(--muted);margin-left:20px;font-size:.92rem}
+  .hero{padding:56px 0 30px;text-align:center}
+  .hero h1{font-size:2.5rem;line-height:1.12;margin:0 0 14px}
+  .hero h1 em{font-style:normal;background:linear-gradient(90deg,var(--accent),var(--accent2));
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .hero p.sub{font-size:1.15rem;color:var(--muted);max-width:640px;margin:0 auto 26px}
+  .scanbox{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:18px;max-width:620px;margin:0 auto;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+  .scanbox .row{display:flex;gap:10px;flex-wrap:wrap}
+  .scanbox input{flex:1;min-width:220px;background:#0e0e20;border:1px solid var(--line);
+    color:var(--fg);border-radius:10px;padding:13px 14px;font-size:1rem}
+  .scanbox input::placeholder{color:#6b6f96}
+  .btn{background:linear-gradient(90deg,var(--accent),#6d4bd6);color:#fff;border:0;border-radius:10px;
+    padding:13px 20px;font-size:1rem;font-weight:700;cursor:pointer;white-space:nowrap}
+  .btn:hover{filter:brightness(1.08)}
+  .scanbox .price{color:var(--muted);font-size:.9rem;margin:12px 4px 2px}
+  .scanbox .price b{color:var(--fg)}
+  .hint{color:var(--muted);font-size:.82rem;margin-top:10px}
+  .msg{margin-top:12px;font-size:.9rem;min-height:1.2em}
+  .msg.err{color:var(--danger)} .msg.ok{color:var(--accent2)}
+  section{padding:40px 0;border-top:1px solid var(--line)}
+  h2{font-size:1.5rem;margin:0 0 18px}
+  .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  .step{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px}
+  .step .n{color:var(--accent2);font-weight:800;font-size:.85rem;letter-spacing:1px}
+  .step h3{margin:.4rem 0 .3rem;font-size:1.05rem}
+  .step p{color:var(--muted);font-size:.92rem;margin:0}
+  .offers{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .offer{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:22px;display:flex;flex-direction:column}
+  .offer.mark{border-color:var(--accent)}
+  .offer .tag{font-size:.78rem;color:var(--accent2);font-weight:700;letter-spacing:1px}
+  .offer h3{font-size:1.25rem;margin:.4rem 0}
+  .offer .p{font-size:1.7rem;font-weight:800;margin:.2rem 0 .6rem}
+  .offer .p small{font-size:.9rem;color:var(--muted);font-weight:500}
+  .offer ul{margin:.4rem 0 16px;padding-left:1.1rem;color:var(--muted)}
+  .offer li{margin:.3rem 0}
+  .offer .btn{margin-top:auto;text-align:center;display:block}
+  .offer .btn.ghost{background:transparent;border:1px solid var(--accent);color:var(--fg)}
+  .scope{background:#1a1330;border:1px solid #3a2a5c;border-radius:var(--radius);padding:18px 20px;color:#d9cef2;font-size:.95rem}
+  .proof ul{color:var(--muted)}
+  footer{padding:34px 0;color:var(--muted);font-size:.9rem;text-align:center}
+  @media (max-width:720px){.steps,.offers{grid-template-columns:1fr}.hero h1{font-size:2rem}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">Solana <span>Security Watch</span></div>
+    <nav class="nav">
+      <a href="#offres">Offres</a>
+      <a href="#preuve">Preuve</a>
+      <a href="https://github.com/OxToF/solana-security-watch">GitHub</a>
+    </nav>
+  </header>
+
+  <div class="hero">
+    <h1>Durcissez votre programme Solana <em>avant</em> qu'on ne le fasse pour vous</h1>
+    <p class="sub">Collez votre dépôt public. On confronte vos dépendances aux advisories RustSec et OSV sur vos versions exactes, et votre code aux 18 classes de vulnérabilités Solana et Anchor. Rapport daté, sévérité, fichier et ligne.</p>
+
+    <form class="scanbox" id="scanForm">
+      <div class="row">
+        <input id="repo" type="url" placeholder="https://github.com/votre-org/votre-repo" required>
+        <input id="email" type="email" placeholder="vous@exemple.com" required>
+        <button class="btn" type="submit">Lancer le scan</button>
+      </div>
+      <div class="price">Scan à la demande, <b>80 $</b>. Dépôt public. Livré rapidement.</div>
+      <div class="msg" id="msg"></div>
+      <div class="hint">Aucune installation. On ne clone que du code public, jamais vos secrets.</div>
+    </form>
+  </div>
+
+  <section id="comment">
+    <h2>Comment ça marche</h2>
+    <div class="steps">
+      <div class="step"><div class="n">01</div><h3>Vous collez le dépôt</h3><p>Une URL GitHub publique. Rien à installer, rien à connecter.</p></div>
+      <div class="step"><div class="n">02</div><h3>On scanne</h3><p>Advisories sur vos versions épinglées, hygiène de build, et leads de code par classe de vulnérabilité.</p></div>
+      <div class="step"><div class="n">03</div><h3>Vous recevez le rapport</h3><p>Un document clair et daté, avec sévérité, emplacement, et pistes de correction.</p></div>
+    </div>
+  </section>
+
+  <section id="offres">
+    <h2>Deux façons de travailler ensemble</h2>
+    <div class="offers">
+      <div class="offer mark">
+        <div class="tag">À LA DEMANDE</div>
+        <h3>Le scan</h3>
+        <div class="p">80 $ <small>par scan</small></div>
+        <ul>
+          <li>Advisories RustSec et OSV sur vos versions exactes</li>
+          <li>Hygiène de build (overflow-checks, version Anchor)</li>
+          <li>Leads de code mappés aux 18 classes connues</li>
+          <li>Rapport daté, sévérité et fichier:ligne</li>
+        </ul>
+        <a class="btn" href="#scanForm" onclick="document.getElementById('repo').focus()">Lancer un scan</a>
+      </div>
+      <div class="offer">
+        <div class="tag">EN CONTINU</div>
+        <h3>La veille</h3>
+        <div class="p">sur devis <small>par mois</small></div>
+        <ul>
+          <li>Surveillance quotidienne de votre arbre de dépendances</li>
+          <li>Passe humaine à chaque nouveau code mergé</li>
+          <li>Rapport privé et canal d'alerte dédié</li>
+          <li>Prévenu le jour d'une faille, pas dans un post mortem</li>
+        </ul>
+        <a class="btn ghost" href="mailto:CONTACT@EXEMPLE.COM?subject=Veille%20continue%20Solana">Discuter de la veille</a>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="scope">
+      <strong>Ce que ce n'est pas.</strong> Un audit complet ne se remplace pas. Ce service détecte les classes de failles connues et les problèmes de dépendances, il ne certifie pas l'absence de tout bug. C'est une première ligne de défense, pas une garantie.
+    </div>
+  </section>
+
+  <section id="preuve" class="proof">
+    <h2>La preuve avant la promesse</h2>
+    <p>Chaque classe couverte est adossée à une preuve exécutable, pas à un paragraphe. Tout est public, vous vérifiez avant de payer.</p>
+    <ul>
+      <li><a href="../examples/sample-scan-report.html">Voir un rapport de scan d'exemple</a></li>
+      <li><a href="../examples/watch-orca-whirlpools-2026-09-01.md">Voir une passe de veille sur un vrai protocole</a></li>
+      <li><a href="https://github.com/OxToF/solana-security-watch">Le référentiel open source (5 preuves exécutables, 18 classes)</a></li>
+    </ul>
+  </section>
+
+  <footer>
+    Solana Security Watch. Outil open source sous licence MIT. Le scan est une aide au durcissement, pas un audit certifié.
+  </footer>
+</div>
+
+<script>
+  // MVP lead-capture: validate the repo URL, then hand off to a backend endpoint
+  // if one is configured, else fall back to a prefilled email. No backend needed
+  // to start collecting leads.
+  var ENDPOINT = window.SSW_ENDPOINT || null;   // set to your serverless URL when ready
+  var CONTACT  = window.SSW_CONTACT  || "CONTACT@EXEMPLE.COM";
+  var form = document.getElementById("scanForm");
+  var msg = document.getElementById("msg");
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    msg.className = "msg"; msg.textContent = "";
+    var repo = document.getElementById("repo").value.trim();
+    var email = document.getElementById("email").value.trim();
+    var ok = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/.test(repo);
+    if (!ok) { msg.className = "msg err"; msg.textContent = "Entrez une URL https://github.com/org/repo valide (dépôt public)."; return; }
+    if (ENDPOINT) {
+      msg.className = "msg"; msg.textContent = "Envoi...";
+      fetch(ENDPOINT, { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ repo: repo, email: email }) })
+        .then(function (r) { if (!r.ok) throw new Error(); msg.className = "msg ok";
+          msg.textContent = "Reçu. Votre rapport arrive par email."; form.reset(); })
+        .catch(function () { msg.className = "msg err"; msg.textContent = "Erreur d'envoi. Réessayez ou écrivez-nous."; });
+    } else {
+      var subject = encodeURIComponent("Scan Solana Security Watch pour " + repo);
+      var body = encodeURIComponent("Dépôt à scanner: " + repo + "\nEmail: " + email + "\n");
+      window.location.href = "mailto:" + CONTACT + "?subject=" + subject + "&body=" + body;
+      msg.className = "msg ok"; msg.textContent = "Votre client email va s'ouvrir pour finaliser la demande.";
+    }
+  });
+</script>
+</body>
+</html>

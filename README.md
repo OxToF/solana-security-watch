@@ -48,8 +48,10 @@ solana-security-watch/
 │   ├── duplicate-mutable/      #   class #17 — duplicate mutable accounts
 │   └── run-all.sh              #   run every suite (no validator, no rebuild)
 ├── bin/
-│   ├── cli.mjs                 # install + collect subcommands
-│   └── collect.mjs             # advisory collector (RustSec/OSV → dated report)
+│   ├── cli.mjs                 # install + collect + scan subcommands
+│   ├── collect.mjs             # advisory collector (RustSec/OSV → dated report)
+│   └── scan.mjs                # per-repo scanner (clone → advisories + leads → report)
+├── site/index.html            # hostable landing page (paste-repo → scan funnel)
 ├── .github/workflows/
 │   ├── pocs.yml                # CI: run every PoC suite on push
 │   └── watch.yml               # scheduled: daily advisory collect → report artifact
@@ -79,6 +81,24 @@ node bin/cli.mjs --target <dir>        # custom base: installs <dir>/skills, <di
 
 Or add the skill to the [Solana AI Kit](https://github.com/solanabr/solana-ai-kit)
 skill registry.
+
+## Scan one repo — the `scan` command
+
+Point it at a public GitHub Anchor repo and it produces a dated report: dependency
+advisories matched against the repo's **exact pinned versions** (RustSec/OSV,
+version-filtered), build-hygiene checks (`overflow-checks`, `anchor-lang`), and
+grep-level code leads mapped to the vuln-class checklist. Deterministic, near-zero
+cost — no LLM. Writes `scan-out/<owner>-<repo>-<date>.{md,html}`.
+
+```bash
+node bin/cli.mjs scan https://github.com/<owner>/<repo>
+```
+
+A scan is a hygiene + known-class first line, **not** an audit — the report says so,
+and code items are labelled leads to confirm, not confirmed findings. A sample
+report is in [`examples/`](examples/sample-scan-report.html), and
+[`site/index.html`](site/index.html) is a hostable landing page that wraps the scan
+in a paste-your-repo funnel.
 
 ## Continuous watch — the `collect` command
 

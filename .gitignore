@@ -47,3 +47,7 @@ dist/
 
 # Live collector output (a committed sample lives in examples/)
 watch-reports/
+
+# Local scan runner output (committed samples live in examples/)
+scan-out/
+.preview/

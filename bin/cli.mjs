@@ -17,19 +17,22 @@ import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCollect, DEFAULT_CRATES } from "./collect.mjs";
+import { runScan } from "./scan.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, "..");
 
 function parseFlags(argv) {
-  const f = { project: false, target: null, yes: false, out: "watch-reports", crates: null };
+  const f = { project: false, target: null, yes: false, out: "watch-reports", crates: null, repo: null, local: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--project") f.project = true;
     else if (a === "--yes") f.yes = true;
     else if (a === "--target") f.target = argv[++i];
     else if (a === "--out") f.out = argv[++i];
+    else if (a === "--local") f.local = argv[++i];
     else if (a === "--crates") f.crates = argv[++i].split(",").map((s) => s.trim()).filter(Boolean);
+    else if (!a.startsWith("--") && !f.repo) f.repo = a; // positional repo URL for `scan`
   }
   return f;
 }
@@ -78,10 +81,28 @@ async function collect(flags) {
   }
 }
 
+async function scan(flags) {
+  if (!flags.repo && !flags.local) {
+    console.error("scan needs a public repo URL: solana-security-watch scan https://github.com/<owner>/<repo>");
+    process.exit(1);
+  }
+  try {
+    await runScan({
+      repoUrl: flags.repo,
+      localPath: flags.local,
+      out: flags.out === "watch-reports" ? "scan-out" : flags.out,
+    });
+  } catch (e) {
+    console.error(`[scan] failed: ${e.message}`);
+    process.exit(1);
+  }
+}
+
 function usage() {
   console.log("Usage:");
   console.log("  solana-security-watch install [--project | --target <dir>] [--yes]");
   console.log("  solana-security-watch collect [--out <dir>] [--crates a,b,c]");
+  console.log("  solana-security-watch scan <https://github.com/owner/repo> [--out <dir>]");
 }
 
 const [cmd, ...rest] = process.argv.slice(2);
@@ -94,6 +115,9 @@ switch (cmd) {
     break;
   case "collect":
     await collect(flags);
+    break;
+  case "scan":
+    await scan(flags);
     break;
   case "help":
   case "--help":
