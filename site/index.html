@@ -32,12 +32,13 @@
   .scanbox input::placeholder{color:#6b6f96}
   .btn{background:linear-gradient(90deg,var(--accent),#6d4bd6);color:#fff;border:0;border-radius:10px;
     padding:13px 20px;font-size:1rem;font-weight:700;cursor:pointer;white-space:nowrap}
-  .btn:hover{filter:brightness(1.08)}
+  .btn:hover{filter:brightness(1.08)} .btn:disabled{opacity:.6;cursor:default}
   .scanbox .price{color:var(--muted);font-size:.9rem;margin:12px 4px 2px}
   .scanbox .price b{color:var(--fg)}
   .hint{color:var(--muted);font-size:.82rem;margin-top:10px}
-  .msg{margin-top:12px;font-size:.9rem;min-height:1.2em}
+  .msg{margin-top:12px;font-size:.9rem;min-height:1.2em;word-break:break-word}
   .msg.err{color:var(--danger)} .msg.ok{color:var(--accent2)}
+  .msg code{background:#0e0e20;padding:.1rem .35rem;border-radius:5px;font-size:.85em}
   section{padding:40px 0;border-top:1px solid var(--line)}
   h2{font-size:1.5rem;margin:0 0 18px}
   .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
@@ -81,9 +82,9 @@
       <div class="row">
         <input id="repo" type="url" placeholder="https://github.com/your-org/your-repo" required>
         <input id="email" type="email" placeholder="you@example.com" required>
-        <button class="btn" type="submit">Run the scan</button>
+        <button class="btn" id="payBtn" type="submit">Pay <span id="amt">80</span> USDC &amp; scan</button>
       </div>
-      <div class="price">On-demand scan, <b>$80</b>. Public repo. Delivered fast.</div>
+      <div class="price">On-demand scan, <b><span id="amt2">80</span> USDC</b> on Solana. Public repo. Pay with any Solana wallet.</div>
       <div class="msg" id="msg"></div>
       <div class="hint">No install. We only clone public code, never your secrets.</div>
     </form>
@@ -92,8 +93,8 @@
   <section id="how">
     <h2>How it works</h2>
     <div class="steps">
-      <div class="step"><div class="n">01</div><h3>You paste the repo</h3><p>A public GitHub URL. Nothing to install, nothing to connect.</p></div>
-      <div class="step"><div class="n">02</div><h3>We scan</h3><p>Advisories on your pinned versions, build hygiene, and code leads by vulnerability class.</p></div>
+      <div class="step"><div class="n">01</div><h3>You paste the repo</h3><p>A public GitHub URL. Nothing to install, nothing to connect but your wallet.</p></div>
+      <div class="step"><div class="n">02</div><h3>You pay in USDC</h3><p>Connect a Solana wallet and pay the scan fee. No card, no account.</p></div>
       <div class="step"><div class="n">03</div><h3>You get the report</h3><p>A clear, dated document with severity, location, and fix pointers.</p></div>
     </div>
   </section>
@@ -104,7 +105,7 @@
       <div class="offer mark">
         <div class="tag">ON DEMAND</div>
         <h3>The scan</h3>
-        <div class="p">$80 <small>per scan</small></div>
+        <div class="p"><span id="amt3">80</span> USDC <small>per scan</small></div>
         <ul>
           <li>RustSec and OSV advisories on your exact versions</li>
           <li>Build hygiene (overflow-checks, Anchor version)</li>
@@ -150,35 +151,98 @@
 </div>
 
 <script src="config.js"></script>
-<script>
-  // MVP lead-capture: validate the repo URL, then hand off to a backend endpoint
-  // if one is configured, else fall back to a prefilled email. No backend needed
-  // to start collecting leads.
-  var ENDPOINT = window.SSW_ENDPOINT || null;   // set to your serverless URL when ready
-  var CONTACT  = window.SSW_CONTACT  || "CONTACT@EXAMPLE.COM";
-  var veille = document.getElementById("veilleBtn");
+<script type="module">
+  const API_BASE = window.SSW_API_BASE || null;
+  const CONTACT  = window.SSW_CONTACT  || "CONTACT@EXAMPLE.COM";
+  const WALLET   = window.SSW_WALLET   || "";
+  const RPC      = window.SSW_RPC      || "https://api.mainnet-beta.solana.com";
+  const AMOUNT   = Number(window.SSW_AMOUNT_USDC || 80);
+  const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"; // Circle USDC (Solana)
+  const MEMO_PROGRAM = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
+
+  for (const id of ["amt", "amt2", "amt3"]) {
+    const el = document.getElementById(id); if (el) el.textContent = String(AMOUNT);
+  }
+  const veille = document.getElementById("veilleBtn");
   if (veille) veille.href = "mailto:" + CONTACT + "?subject=" + encodeURIComponent("Continuous Solana security watch");
-  var form = document.getElementById("scanForm");
-  var msg = document.getElementById("msg");
-  form.addEventListener("submit", function (e) {
+
+  const form = document.getElementById("scanForm");
+  const msg = document.getElementById("msg");
+  const payBtn = document.getElementById("payBtn");
+
+  function setMsg(kind, html) { msg.className = "msg" + (kind ? " " + kind : ""); msg.innerHTML = html; }
+
+  async function payWithWallet(reference) {
+    const provider = window.solana;
+    if (!provider || !provider.isPhantom) {
+      throw new Error('No Solana wallet found. Install <a href="https://phantom.app" target="_blank" rel="noopener">Phantom</a> and reload.');
+    }
+    if (!WALLET) throw new Error("Recipient wallet is not configured yet.");
+    await provider.connect();
+    const payer = provider.publicKey;
+
+    const web3 = await import("https://esm.sh/@solana/web3.js@1.95.3");
+    const spl = await import("https://esm.sh/@solana/spl-token@0.4.9");
+    const conn = new web3.Connection(RPC, "confirmed");
+    const mint = new web3.PublicKey(USDC_MINT);
+    const merchant = new web3.PublicKey(WALLET);
+    const payerAta = spl.getAssociatedTokenAddressSync(mint, payer);
+    const merchantAta = spl.getAssociatedTokenAddressSync(mint, merchant);
+    const base = BigInt(Math.round(AMOUNT * 1e6)); // USDC has 6 decimals
+
+    const tx = new web3.Transaction().add(
+      spl.createAssociatedTokenAccountIdempotentInstruction(payer, merchantAta, merchant, mint),
+      spl.createTransferCheckedInstruction(payerAta, mint, merchantAta, payer, base, 6),
+      new web3.TransactionInstruction({ keys: [], programId: new web3.PublicKey(MEMO_PROGRAM), data: new TextEncoder().encode(reference) })
+    );
+    tx.feePayer = payer;
+    tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+    const { signature } = await provider.signAndSendTransaction(tx);
+    return signature;
+  }
+
+  form.addEventListener("submit", async (e) => {
     e.preventDefault();
-    msg.className = "msg"; msg.textContent = "";
-    var repo = document.getElementById("repo").value.trim();
-    var email = document.getElementById("email").value.trim();
-    var ok = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/.test(repo);
-    if (!ok) { msg.className = "msg err"; msg.textContent = "Enter a valid https://github.com/org/repo URL (public repo)."; return; }
-    if (ENDPOINT) {
-      msg.className = "msg"; msg.textContent = "Sending...";
-      fetch(ENDPOINT, { method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ repo: repo, email: email }) })
-        .then(function (r) { if (!r.ok) throw new Error(); msg.className = "msg ok";
-          msg.textContent = "Got it. Your report is on its way by email."; form.reset(); })
-        .catch(function () { msg.className = "msg err"; msg.textContent = "Something went wrong. Please retry or email us."; });
-    } else {
-      var subject = encodeURIComponent("Solana Security Watch scan for " + repo);
-      var body = encodeURIComponent("Repo to scan: " + repo + "\nEmail: " + email + "\n");
-      window.location.href = "mailto:" + CONTACT + "?subject=" + subject + "&body=" + body;
-      msg.className = "msg ok"; msg.textContent = "Your email client will open to finish the request.";
+    const repo = document.getElementById("repo").value.trim();
+    const email = document.getElementById("email").value.trim();
+    if (!/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/.test(repo)) {
+      return setMsg("err", "Enter a valid https://github.com/org/repo URL (public repo).");
+    }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return setMsg("err", "Enter a valid email.");
+
+    payBtn.disabled = true;
+    try {
+      // If the backend is live, create the job first so the payment memo carries its id.
+      let reference = email;
+      if (API_BASE) {
+        setMsg("", "Creating your scan order...");
+        const r = await fetch(API_BASE + "/scan", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ repo, email })
+        });
+        if (!r.ok) throw new Error("Could not create the order. Try again.");
+        reference = (await r.json()).jobId;
+      }
+
+      setMsg("", "Approve the " + AMOUNT + " USDC payment in your wallet...");
+      const signature = await payWithWallet(reference);
+
+      if (API_BASE) {
+        setMsg("", "Payment sent. Verifying on-chain and starting your scan...");
+        const v = await fetch(API_BASE + "/pay/verify", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jobId: reference, signature })
+        });
+        if (!v.ok) throw new Error("Payment received but verification failed. Email us the signature below.");
+        setMsg("ok", "Paid. Your report will arrive by email shortly. Signature: <code>" + signature + "</code>");
+      } else {
+        setMsg("ok", "Payment sent. Email <b>" + CONTACT + "</b> with your repo and this signature to get your report: <code>" + signature + "</code>");
+      }
+      form.reset();
+    } catch (err) {
+      setMsg("err", (err && err.message) ? err.message : "Payment failed or was cancelled.");
+    } finally {
+      payBtn.disabled = false;
     }
   });
 </script>

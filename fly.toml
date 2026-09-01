@@ -1,7 +1,7 @@
 # Fly.io config for the scan backend. Rename `app` to a name you own, then:
 #   fly launch --no-deploy       (first time, creates the app)
 #   fly volume create sswdata -r cdg -n 1 -s 1     (1GB volume for the job store)
-#   fly secrets set ADMIN_TOKEN=... PAY_INSTRUCTIONS='...' RESEND_API_KEY=... MAIL_FROM=... ALLOW_ORIGIN='https://your-landing'
+#   fly secrets set ADMIN_TOKEN=... MERCHANT_WALLET=7yMn... SOLANA_RPC_URL=... PAY_INSTRUCTIONS='...' RESEND_API_KEY=... MAIL_FROM=... ALLOW_ORIGIN='https://your-landing'
 #   fly deploy
 app = "solana-security-watch-scan"
 primary_region = "cdg"

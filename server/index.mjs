@@ -20,6 +20,7 @@ import { runScan, parseGithubUrl } from "../bin/scan.mjs";
 import { Store } from "./store.mjs";
 import { Queue } from "./queue.mjs";
 import { sendReport } from "./email.mjs";
+import { verifyUsdcPayment } from "./verify.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -27,6 +28,8 @@ const PRICE_USD = Number(process.env.SCAN_PRICE_USD || 80);
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || null;
 const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN || "*";
 const ALLOW_LOCAL = process.env.ALLOW_LOCAL === "1"; // dev/testing only
+const MERCHANT_WALLET = process.env.MERCHANT_WALLET || null; // USDC recipient (Solana)
+const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
 const PAY_INSTRUCTIONS =
   process.env.PAY_INSTRUCTIONS ||
   "Payment instructions not configured. Set PAY_INSTRUCTIONS (e.g. a USDC address or a Stripe link).";
@@ -148,6 +151,31 @@ const server = createServer(async (req, res) => {
       return send(res, 202, { jobId: job.id, status: "paid", queued: true });
     }
 
+    if (req.method === "POST" && url.pathname === "/pay/verify") {
+      if (!MERCHANT_WALLET) return send(res, 500, { error: "MERCHANT_WALLET not configured" });
+      if (rateLimited(ip)) return send(res, 429, { error: "rate limited" });
+      const body = await readBody(req);
+      const job = store.get(body.jobId);
+      if (!job) return send(res, 404, { error: "unknown jobId" });
+      if (job.status === "done" || job.status === "running" || job.status === "paid")
+        return send(res, 409, { error: `job already ${job.status}` });
+      // Replay protection: a signature can pay for exactly one job.
+      const dup = store.findBySignature(body.signature);
+      if (dup) return send(res, 409, { error: "payment signature already used" });
+
+      const result = await verifyUsdcPayment({
+        signature: body.signature,
+        amountUsdc: job.priceUsd || PRICE_USD,
+        merchant: MERCHANT_WALLET,
+        rpcUrl: SOLANA_RPC_URL,
+      });
+      if (!result.ok) return send(res, 402, { error: `payment not verified: ${result.reason}` });
+
+      store.update(job.id, { status: "paid", paidAt: new Date().toISOString(), paymentSignature: body.signature });
+      queue.enqueue(() => runJob(job.id));
+      return send(res, 202, { jobId: job.id, status: "paid", queued: true });
+    }
+
     if (req.method === "GET" && url.pathname.startsWith("/jobs/")) {
       const job = store.get(url.pathname.split("/")[2]);
       if (!job) return send(res, 404, { error: "unknown jobId" });
@@ -169,7 +197,8 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`[server] solana-security-watch scan backend on :${PORT}`);
-  console.log(`[server] admin ${ADMIN_TOKEN ? "enabled" : "DISABLED (set ADMIN_TOKEN)"} · email ${process.env.RESEND_API_KEY ? "Resend" : "DEV mode (disk)"} · price $${PRICE_USD}`);
+  console.log(`[server] admin ${ADMIN_TOKEN ? "enabled" : "DISABLED (set ADMIN_TOKEN)"} · email ${process.env.RESEND_API_KEY ? "Resend" : "DEV mode (disk)"} · price ${PRICE_USD} USDC`);
+  console.log(`[server] payments ${MERCHANT_WALLET ? "on -> " + MERCHANT_WALLET : "OFF (set MERCHANT_WALLET to enable /pay/verify)"} · rpc ${SOLANA_RPC_URL}`);
 });
 
 export { server };

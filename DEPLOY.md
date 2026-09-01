@@ -21,6 +21,8 @@ fly volume create sswdata -r cdg -n 1 -s 1      # 1GB volume for the job store (
 # secrets (never commit these — set them here)
 fly secrets set \
   ADMIN_TOKEN="$(openssl rand -hex 16)" \
+  MERCHANT_WALLET="7yMnWMrxzZ3YCtWXRsZEhAFwexHoJzBJy8RgN7Lhvy1P" \
+  SOLANA_RPC_URL="https://your-helius-or-quicknode-rpc" \
   PAY_INSTRUCTIONS="Send 80 USDC (Solana) to <your-address>, memo = your jobId" \
   RESEND_API_KEY="re_..." \
   MAIL_FROM="scan@yourdomain.com" \
@@ -93,3 +95,34 @@ curl -H "authorization: Bearer $ADMIN_TOKEN" https://<your-backend>/admin/jobs
 
 Automate step 3 later (a USDC watcher or a Stripe webhook that calls `/confirm`)
 only once the demand is proven.
+
+---
+
+## D. Payments (wallet connect, USDC on Solana)
+
+The landing lets a buyer connect a Solana wallet (Phantom) and pay in USDC. Config
+lives in `site/config.js`:
+
+```js
+window.SSW_API_BASE    = "https://<your-backend>";   // enables auto delivery; null = manual
+window.SSW_WALLET      = "<your USDC recipient address>";
+window.SSW_RPC         = "https://<your-rpc>";        // replace the public one before real traffic
+window.SSW_AMOUNT_USDC = 80;                          // set to 1 for your first test payment
+```
+
+Backend needs `MERCHANT_WALLET` (same address) and `SOLANA_RPC_URL`. On payment the
+page sends the USDC transfer, then calls `POST /pay/verify {jobId, signature}`; the
+backend confirms on-chain (correct mint, amount, recipient; each signature usable
+once) and runs the scan. While `SSW_API_BASE` is null the payment still works but
+the payer is told to email you the signature (you confirm with `/confirm` by hand).
+
+**Test with a real payment before sharing the link.** Set `SSW_AMOUNT_USDC = 1`,
+pay yourself once end to end, confirm the report arrives, then set it back to `80`.
+
+## Fix Vercel auto-deploy (important)
+
+The project auto-deploys on every push, but its **Root Directory** must be `site`,
+or the build runs from the repo root (no `index.html` there) and the site 404s.
+In the Vercel dashboard: Project → Settings → General → **Root Directory** → set to
+`site` → Save. After that, every `git push` redeploys the landing correctly. Until
+you set it, deploy manually with `npx vercel --prod` from the `site/` folder.

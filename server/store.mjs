@@ -33,4 +33,8 @@ export class Store {
     const all = Object.values(this.jobs).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return filter ? all.filter(filter) : all;
   }
+  // Replay protection: has this payment signature already been credited to a job?
+  findBySignature(sig) {
+    return Object.values(this.jobs).find((j) => j.paymentSignature === sig) || null;
+  }
 }
