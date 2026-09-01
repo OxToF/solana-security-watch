@@ -1,0 +1,20 @@
+name: watch
+on:
+  schedule:
+    - cron: "17 7 * * *"   # daily 07:17 UTC
+  workflow_dispatch:
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Collect RustSec/OSV advisories for the Solana surface
+        run: node bin/cli.mjs collect --out watch-reports
+      - name: Upload dated report
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-watch-report
+          path: watch-reports/reports/

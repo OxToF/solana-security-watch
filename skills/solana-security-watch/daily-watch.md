@@ -105,7 +105,20 @@ finding above INFERRED confidence — X and Y remain unverified."
 
 ## Procedure
 
-### 1. Collect (WebSearch)
+### 1. Collect
+
+The dependency-advisory half is automated — run the collector for a deterministic,
+diffed feed of RustSec/OSV advisories over the Solana/Anchor surface before you
+start searching:
+
+```bash
+npx solana-security-watch collect      # or: node bin/cli.mjs collect
+```
+
+It writes `watch-reports/reports/<date>.{md,json}` and reports only advisories new
+since the last run (state in `watch-reports/state.json`). Fold its `🆕` section
+into the report's dependency findings, then use WebSearch for everything the
+advisory DBs don't carry — live exploits, post-mortems, auditor threads:
 
 Pull items from the last 24–48h across:
 

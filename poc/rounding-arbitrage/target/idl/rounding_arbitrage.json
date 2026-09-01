@@ -1,0 +1,169 @@
+{
+  "address": "4hBF3mmenLCt8ps62uuhrKDGFwufBy616G96fNqj6Dcq",
+  "metadata": {
+    "name": "rounding_arbitrage",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "PoC — vuln-classes.md #4 rounding-direction arbitrage"
+  },
+  "instructions": [
+    {
+      "name": "init_meter",
+      "discriminator": [
+        234,
+        52,
+        85,
+        18,
+        129,
+        176,
+        229,
+        214
+      ],
+      "accounts": [
+        {
+          "name": "meter",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  116,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "redeem_insecure",
+      "docs": [
+        "VULNERABLE: rounds the payout UP (ceil). Redeeming 1 share of a 100/3 pool",
+        "quotes 34 instead of the 33 owed — one unit skimmed from reserves per call."
+      ],
+      "discriminator": [
+        5,
+        0,
+        15,
+        127,
+        194,
+        149,
+        99,
+        142
+      ],
+      "accounts": [
+        {
+          "name": "meter",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  116,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "shares",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "redeem_secure",
+      "docs": [
+        "FIXED: rounds the payout DOWN (floor). Redeeming 1 share quotes 33 — the",
+        "remainder stays with the pool, never with the redeemer."
+      ],
+      "discriminator": [
+        139,
+        187,
+        130,
+        242,
+        125,
+        76,
+        54,
+        41
+      ],
+      "accounts": [
+        {
+          "name": "meter",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  116,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "shares",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Meter",
+      "discriminator": [
+        5,
+        115,
+        227,
+        240,
+        63,
+        166,
+        206,
+        182
+      ]
+    }
+  ],
+  "types": [
+    {
+      "name": "Meter",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "last_payout",
+            "type": "u64"
+          }
+        ]
+      }
+    }
+  ]
+}

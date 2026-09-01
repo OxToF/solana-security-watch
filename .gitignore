@@ -44,3 +44,6 @@ dist/
 *.swp
 .idea/
 .vscode/
+
+# Live collector output (a committed sample lives in examples/)
+watch-reports/

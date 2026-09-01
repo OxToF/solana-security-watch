@@ -1,6 +1,6 @@
 {
   "name": "solana-security-watch",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Continuous security monitoring for Solana/Anchor programs — a Claude Code skill, /security-watch command, and security-auditor agent.",
   "license": "MIT",
   "author": "OxToF",
@@ -13,14 +13,17 @@
     "skills",
     "commands",
     "agents",
-    "poc/account-substitution/programs",
-    "poc/account-substitution/tests",
-    "poc/account-substitution/target/deploy",
-    "poc/account-substitution/target/idl",
-    "poc/account-substitution/Anchor.toml",
-    "poc/account-substitution/Cargo.toml",
-    "poc/account-substitution/package.json",
-    "poc/account-substitution/tsconfig.json",
+    "examples",
+    "poc/*/programs",
+    "poc/*/tests",
+    "poc/*/target/deploy/*.so",
+    "poc/*/target/idl",
+    "poc/*/Anchor.toml",
+    "poc/*/Cargo.toml",
+    "poc/*/package.json",
+    "poc/*/tsconfig.json",
+    "poc/*/.mocharc.cjs",
+    "poc/*/.yarnrc",
     "README.md",
     "LICENSE"
   ],
@@ -34,6 +37,15 @@
     "security",
     "audit",
     "claude-code",
-    "claude-code-skill"
-  ]
+    "claude-code-skill",
+    "rustsec",
+    "osv",
+    "supply-chain",
+    "poc"
+  ],
+  "scripts": {
+    "collect": "node bin/cli.mjs collect --out watch-reports",
+    "test:pocs": "bash poc/run-all.sh",
+    "test": "bash poc/run-all.sh"
+  }
 }

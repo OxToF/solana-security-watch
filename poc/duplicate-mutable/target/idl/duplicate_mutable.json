@@ -1,0 +1,158 @@
+{
+  "address": "7AptpiMiL6WTBgNjDaRZgZMnbqGGiNjfjzvvvHdtxQo1",
+  "metadata": {
+    "name": "duplicate_mutable",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "PoC — vuln-classes.md #17 duplicate mutable accounts"
+  },
+  "instructions": [
+    {
+      "name": "init_balance",
+      "discriminator": [
+        174,
+        51,
+        4,
+        34,
+        196,
+        72,
+        204,
+        66
+      ],
+      "accounts": [
+        {
+          "name": "balance",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "transfer_insecure",
+      "docs": [
+        "VULNERABLE: no distinctness check. Passing the same account for source and",
+        "destination inflates it — the credited struct is serialised last and wins."
+      ],
+      "discriminator": [
+        101,
+        86,
+        90,
+        37,
+        86,
+        254,
+        24,
+        212
+      ],
+      "accounts": [
+        {
+          "name": "source",
+          "writable": true
+        },
+        {
+          "name": "destination",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "transfer_secure",
+      "docs": [
+        "FIXED: reject aliased accounts before touching balances, then move funds with",
+        "checked arithmetic. A self-transfer is refused; distinct accounts still work."
+      ],
+      "discriminator": [
+        117,
+        227,
+        156,
+        37,
+        20,
+        128,
+        234,
+        53
+      ],
+      "accounts": [
+        {
+          "name": "source",
+          "writable": true
+        },
+        {
+          "name": "destination",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Balance",
+      "discriminator": [
+        127,
+        71,
+        25,
+        157,
+        105,
+        157,
+        241,
+        182
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "DuplicateAccount",
+      "msg": "source and destination must be distinct accounts"
+    },
+    {
+      "code": 6001,
+      "name": "InsufficientFunds",
+      "msg": "insufficient funds in source"
+    },
+    {
+      "code": 6002,
+      "name": "MathOverflow",
+      "msg": "destination balance overflowed"
+    }
+  ],
+  "types": [
+    {
+      "name": "Balance",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    }
+  ]
+}

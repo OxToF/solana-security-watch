@@ -1,0 +1,14 @@
+.anchor
+.DS_Store
+target/debug
+target/release
+target/sbpf-solana-solana
+**/*.rs.bk
+node_modules
+test-ledger
+.yarn
+
+# The compiled program (target/deploy/*.so) and target/idl are committed on
+# purpose so the PoC runs immediately with `yarn && yarn test`, no `anchor build`
+# required. The program keypair stays ignored (see the repo-root .gitignore) — it
+# isn't needed to run the tests, only to rebuild/redeploy to the same address.

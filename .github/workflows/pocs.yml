@@ -1,0 +1,19 @@
+name: pocs
+on:
+  push:
+    paths: ["poc/**", ".github/workflows/pocs.yml"]
+  pull_request:
+    paths: ["poc/**"]
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # Each PoC ships its compiled .so, so no Solana/Anchor toolchain is needed —
+      # the suites run against the prebuilt program via LiteSVM.
+      - name: Run every PoC suite
+        run: bash poc/run-all.sh

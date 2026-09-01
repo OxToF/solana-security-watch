@@ -40,9 +40,20 @@ solana-security-watch/
 │   └── security-watch.md        # executable slash command: deps + grep + advisories → report
 ├── agents/
 │   └── security-auditor.md      # read-only subagent running the same workflow autonomously
-├── poc/
-│   └── account-substitution/    # EXPLOIT/DEFENSE/POSITIVE CONTROL LiteSVM suite, class #1
-├── bin/cli.mjs                  # installer (global or --project)
+├── poc/                        # runnable EXPLOIT/DEFENSE/POSITIVE-CONTROL LiteSVM suites
+│   ├── account-substitution/   #   class #1  — missing owner check
+│   ├── init-reinit/            #   class #2  — init_if_needed reinit takeover
+│   ├── rounding-arbitrage/     #   class #4  — rounding-direction arbitrage
+│   ├── unbounded-cast/         #   class #7  — unbounded integer cast / truncation
+│   ├── duplicate-mutable/      #   class #17 — duplicate mutable accounts
+│   └── run-all.sh              #   run every suite (no validator, no rebuild)
+├── bin/
+│   ├── cli.mjs                 # install + collect subcommands
+│   └── collect.mjs             # advisory collector (RustSec/OSV → dated report)
+├── .github/workflows/
+│   ├── pocs.yml                # CI: run every PoC suite on push
+│   └── watch.yml               # scheduled: daily advisory collect → report artifact
+├── examples/                   # a committed sample collect report
 └── README.md
 ```
 
@@ -69,6 +80,25 @@ node bin/cli.mjs --target <dir>        # custom base: installs <dir>/skills, <di
 Or add the skill to the [Solana AI Kit](https://github.com/solanabr/solana-ai-kit)
 skill registry.
 
+## Continuous watch — the `collect` command
+
+The "watch" half is a zero-dependency collector that pulls current RustSec/OSV
+advisories for the Solana + Anchor dependency surface (`anchor-lang`, `spl-token`,
+`borsh`, `curve25519-dalek`, `ring`, …), **diffs against the last run**, and writes
+a dated report — so a scheduled run surfaces only what is *new*:
+
+```bash
+npx solana-security-watch collect            # writes watch-reports/reports/<date>.{md,json}
+node bin/cli.mjs collect --out watch-reports  # from a clone
+```
+
+Point `watch.yml` (or any cron / scheduled agent) at it for a daily heartbeat. A
+sample report lives in [`examples/`](examples/); it flags, among others, the
+`arrayref` malicious-release advisory (RUSTSEC-2026-0260) and the two 2026 Anchor
+account-substitution advisories (RUSTSEC-2026-0144/0146) that map straight onto
+class #1. State is kept in `watch-reports/state.json`; only the first sighting of
+an advisory (across all of its RUSTSEC/CVE/GHSA aliases) is reported as new.
+
 ## Use
 
 ```
@@ -83,22 +113,30 @@ journal.
 
 ## Proof, not just prose
 
-For class #1 (account substitution — the highest-yield surface per the
-checklist), [`poc/account-substitution/`](poc/account-substitution/) ships a
-compiled Anchor program with a vulnerable/fixed instruction pair and a LiteSVM
-test suite:
+Five vulnerability classes ship a **runnable** proof — a compiled Anchor program
+with a vulnerable/fixed instruction pair and a LiteSVM suite that fires an actual
+transaction, not a read of the source:
+
+| PoC | Class | What the EXPLOIT proves |
+|---|---|---|
+| [`account-substitution`](poc/account-substitution/) | #1 | a forged, non-program-owned account bypasses `unstake` |
+| [`init-reinit`](poc/init-reinit/) | #2 | a second `init_if_needed` call hijacks `config.authority` |
+| [`rounding-arbitrage`](poc/rounding-arbitrage/) | #4 | a redeem quote rounds **up** (34) vs the owed 33 |
+| [`unbounded-cast`](poc/unbounded-cast/) | #7 | `2^64+500` truncates past a `u64` cap check, crediting ~1.8e19 |
+| [`duplicate-mutable`](poc/duplicate-mutable/) | #17 | a self-transfer mints 100 out of nothing (100 → 200) |
+
+Each suite follows the **EXPLOIT / DEFENSE / POSITIVE CONTROL** pattern: the bug
+fires, the fix rejects it *on the right error* (not an unrelated failure), and the
+fix is shown to still accept genuine inputs (not a blanket reject). Run one, or all:
 
 ```bash
-cd poc/account-substitution
-yarn && yarn test      # 3 passing in ~20ms — no validator, no rebuild required
+bash poc/run-all.sh                    # all 5 suites — 15 passing, no validator, no rebuild
+cd poc/unbounded-cast && yarn && yarn test   # or just one
 ```
 
-It proves, with an actual transaction rather than a read of the source, that a
-forged account bypasses the vulnerable instruction and is rejected —
-specifically on Anchor's `AccountOwnedByWrongProgram` check, not some
-unrelated failure — by the fixed one. See
-[`poc-harness.md`](skills/solana-security-watch/poc-harness.md) for the
-EXPLOIT/DEFENSE/POSITIVE CONTROL pattern and how to extend it to the next class.
+Every PoC ships its compiled `target/deploy/*.so`, so the suites run with only
+Node + yarn. See [`poc-harness.md`](skills/solana-security-watch/poc-harness.md)
+for the pattern and how to add the next class.
 
 ## Demo — a real watch pass
 

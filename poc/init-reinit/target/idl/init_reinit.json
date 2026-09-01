@@ -1,0 +1,136 @@
+{
+  "address": "6Gcu3VQHJFHq4jeM7iRcYsvXBRDzjv4vaxiqUnFfaFn8",
+  "metadata": {
+    "name": "init_reinit",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "PoC — vuln-classes.md #2 init_if_needed re-initialisation"
+  },
+  "instructions": [
+    {
+      "name": "initialize_insecure",
+      "docs": [
+        "VULNERABLE: `init_if_needed` + unconditional `authority` write. Re-callable",
+        "by anyone; each call overwrites the authority with the current signer."
+      ],
+      "discriminator": [
+        66,
+        109,
+        130,
+        167,
+        42,
+        38,
+        232,
+        10
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize_secure",
+      "docs": [
+        "FIXED: plain `init` — the account can be created exactly once. A replay by",
+        "the attacker fails at the constraint layer before the body runs."
+      ],
+      "discriminator": [
+        22,
+        242,
+        50,
+        101,
+        87,
+        199,
+        204,
+        53
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Config",
+      "discriminator": [
+        155,
+        12,
+        170,
+        224,
+        30,
+        250,
+        204,
+        130
+      ]
+    }
+  ],
+  "types": [
+    {
+      "name": "Config",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          }
+        ]
+      }
+    }
+  ]
+}

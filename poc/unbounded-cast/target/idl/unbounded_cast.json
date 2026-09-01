@@ -1,0 +1,149 @@
+{
+  "address": "A3ofMnuA4GAvRmZTi3q3kucyGnBUPJKku7VrfGrAn7Z",
+  "metadata": {
+    "name": "unbounded_cast",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "PoC — vuln-classes.md #7 unbounded integer cast / truncation"
+  },
+  "instructions": [
+    {
+      "name": "credit_insecure",
+      "docs": [
+        "VULNERABLE: the cap check narrows `amount` to `u64` before comparing, so the",
+        "high 64 bits never reach the comparison. `amount = 2^64 + 500` truncates to",
+        "`500 <= CREDIT_CAP` and passes, but the full `amount` is credited."
+      ],
+      "discriminator": [
+        74,
+        200,
+        46,
+        60,
+        39,
+        38,
+        194,
+        49
+      ],
+      "accounts": [
+        {
+          "name": "ledger",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "amount_hi",
+          "type": "u64"
+        },
+        {
+          "name": "amount_lo",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "credit_secure",
+      "docs": [
+        "FIXED: the bound is checked at full `u128` width, so no high bits are lost.",
+        "An over-cap amount is rejected before any state changes."
+      ],
+      "discriminator": [
+        53,
+        246,
+        246,
+        226,
+        195,
+        199,
+        168,
+        211
+      ],
+      "accounts": [
+        {
+          "name": "ledger",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "amount_hi",
+          "type": "u64"
+        },
+        {
+          "name": "amount_lo",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "init_ledger",
+      "discriminator": [
+        91,
+        194,
+        32,
+        83,
+        92,
+        206,
+        54,
+        67
+      ],
+      "accounts": [
+        {
+          "name": "ledger",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Ledger",
+      "discriminator": [
+        43,
+        41,
+        21,
+        213,
+        180,
+        176,
+        95,
+        32
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "ExceedsCap",
+      "msg": "amount exceeds the per-call credit cap"
+    },
+    {
+      "code": 6001,
+      "name": "MathOverflow",
+      "msg": "credited total overflowed"
+    }
+  ],
+  "types": [
+    {
+      "name": "Ledger",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "credited",
+            "type": "u128"
+          }
+        ]
+      }
+    }
+  ]
+}
