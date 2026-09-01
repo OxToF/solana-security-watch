@@ -1,0 +1,16 @@
+.git
+node_modules
+**/node_modules
+**/target
+poc
+skills
+commands
+agents
+examples
+site
+watch-reports
+scan-out
+.preview
+server/data
+server/deliveries
+*.log

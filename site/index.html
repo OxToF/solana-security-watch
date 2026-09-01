@@ -123,7 +123,7 @@
           <li>Rapport privé et canal d'alerte dédié</li>
           <li>Prévenu le jour d'une faille, pas dans un post mortem</li>
         </ul>
-        <a class="btn ghost" href="mailto:CONTACT@EXEMPLE.COM?subject=Veille%20continue%20Solana">Discuter de la veille</a>
+        <a class="btn ghost" id="veilleBtn" href="mailto:CONTACT@EXEMPLE.COM?subject=Veille%20continue%20Solana">Discuter de la veille</a>
       </div>
     </div>
   </section>
@@ -149,12 +149,15 @@
   </footer>
 </div>
 
+<script src="config.js"></script>
 <script>
   // MVP lead-capture: validate the repo URL, then hand off to a backend endpoint
   // if one is configured, else fall back to a prefilled email. No backend needed
   // to start collecting leads.
   var ENDPOINT = window.SSW_ENDPOINT || null;   // set to your serverless URL when ready
   var CONTACT  = window.SSW_CONTACT  || "CONTACT@EXEMPLE.COM";
+  var veille = document.getElementById("veilleBtn");
+  if (veille) veille.href = "mailto:" + CONTACT + "?subject=" + encodeURIComponent("Veille continue Solana");
   var form = document.getElementById("scanForm");
   var msg = document.getElementById("msg");
   form.addEventListener("submit", function (e) {
