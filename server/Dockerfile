@@ -2,9 +2,10 @@
 # the server imports ../bin/scan.mjs:  docker build -f server/Dockerfile .
 FROM node:22-slim
 
-# git: the scanner clones target repos. ca-certificates: https clone + OSV fetch.
+# tar: the scanner downloads + extracts target repos as tarballs. ca-certificates:
+# https to the GitHub API + OSV.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates \
+ && apt-get install -y --no-install-recommends ca-certificates tar \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

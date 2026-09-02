@@ -23,12 +23,23 @@ export function parseGithubUrl(input) {
   return { owner: m[1], repo: m[2], url: `https://github.com/${m[1]}/${m[2]}.git` };
 }
 
-function cloneRepo(url, dir, log) {
-  log(`[scan] cloning ${url}`);
-  execFileSync("git", ["clone", "--depth", "1", "--quiet", url, dir], {
-    stdio: ["ignore", "ignore", "pipe"],
-    timeout: 120000,
-  });
+// Fetch the repo as a tarball via the GitHub API instead of `git clone`. Anonymous
+// git clones from datacenter IPs get throttled (GitHub answers 401 -> git prompts
+// for a username -> non-interactive failure). The tarball endpoint is more tolerant
+// and, with a GITHUB_TOKEN, gets the authenticated 5000/hr limit. Returns the path
+// to the extracted repo directory.
+async function fetchRepo(owner, repo, workdir, log, fetchImpl, token) {
+  log(`[scan] downloading ${owner}/${repo} tarball`);
+  const headers = { "User-Agent": "solana-security-watch", Accept: "application/vnd.github+json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/tarball`, { headers });
+  if (!res.ok) throw new Error(`GitHub tarball ${res.status} for ${owner}/${repo}`);
+  const tgz = join(workdir, "_repo.tar.gz");
+  writeFileSync(tgz, Buffer.from(await res.arrayBuffer()));
+  execFileSync("tar", ["-xzf", tgz, "-C", workdir], { stdio: ["ignore", "ignore", "pipe"], timeout: 120000 });
+  const sub = readdirSync(workdir, { withFileTypes: true }).find((e) => e.isDirectory());
+  if (!sub) throw new Error("empty tarball");
+  return join(workdir, sub.name);
 }
 
 // Minimal Cargo.lock parser: [[package]] name/version pairs. Good enough to learn
@@ -284,9 +295,9 @@ export async function runScan(opts = {}) {
   } else {
     const g = parseGithubUrl(repoUrl);
     owner = g.owner; repo = g.repo;
-    dir = mkdtempSync(join(tmpdir(), "ssw-scan-"));
-    cloneRepo(g.url, dir, log);
-    cleanup = dir;
+    const work = mkdtempSync(join(tmpdir(), "ssw-scan-"));
+    dir = await fetchRepo(g.owner, g.repo, work, log, fetchImpl, process.env.GITHUB_TOKEN);
+    cleanup = work;
   }
 
   const lockFiles = findFiles(dir, (n) => n === "Cargo.lock");
