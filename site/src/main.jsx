@@ -29,3 +29,5 @@ function Root() {
 createRoot(document.getElementById("root")).render(<Root />);
 
 // build: pick up VITE_SOLANA_RPC env
+
+// rpc key updated
