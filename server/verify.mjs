@@ -47,12 +47,27 @@ async function getTransaction(signature, rpcUrl, fetchImpl) {
   return body.result;
 }
 
-export async function verifyUsdcPayment({ signature, amountUsdc, merchant, rpcUrl, mint = USDC_MINT, fetchImpl = globalThis.fetch }) {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+export async function verifyUsdcPayment({
+  signature, amountUsdc, merchant, rpcUrl, mint = USDC_MINT,
+  fetchImpl = globalThis.fetch, retries = 10, delayMs = 3000,
+}) {
   if (!/^[1-9A-HJ-NP-Za-km-z]{64,120}$/.test(signature || "")) {
     return { ok: false, reason: "invalid signature format" };
   }
-  let tx;
-  try { tx = await getTransaction(signature, rpcUrl, fetchImpl); }
-  catch (e) { return { ok: false, reason: `RPC lookup failed: ${e.message}` }; }
+  // The client submits the tx and calls us immediately, so the tx is usually not
+  // yet confirmed on the first lookup. Poll for it before giving up.
+  let tx = null, lastErr = null;
+  for (let i = 0; i < retries; i++) {
+    try {
+      tx = await getTransaction(signature, rpcUrl, fetchImpl);
+    } catch (e) {
+      lastErr = e; // transient RPC error — keep polling
+    }
+    if (tx) break;
+    if (i < retries - 1) await sleep(delayMs);
+  }
+  if (!tx && lastErr) return { ok: false, reason: `RPC lookup failed: ${lastErr.message}` };
   return verifyFromTx(tx, { amountUsdc, merchant, mint });
 }
