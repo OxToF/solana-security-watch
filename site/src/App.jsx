@@ -18,6 +18,24 @@ const MEMO_PROGRAM = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
 const isRepo = (s) => /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/.test(s);
 const isEmail = (s) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s);
 
+function Logo({ size = 34 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-label="Solana Watchdog">
+      <defs><linearGradient id="wgl" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#9945FF" /><stop offset="1" stopColor="#14F195" /></linearGradient></defs>
+      <circle cx="32" cy="32" r="30" fill="url(#wgl)" />
+      <path d="M16 24 L21 7 L27 20 Z" fill="#efe7d6" /><path d="M48 24 L43 7 L37 20 Z" fill="#efe7d6" />
+      <path d="M19.5 21 L21.6 12 L24.4 19 Z" fill="#b98cff" /><path d="M44.5 21 L42.4 12 L39.6 19 Z" fill="#b98cff" />
+      <ellipse cx="32" cy="34" rx="15" ry="14" fill="#f4eddd" /><ellipse cx="32" cy="41" rx="8" ry="6.5" fill="#fffaf0" />
+      <path d="M21.5 29 L28 30.5" stroke="#3a3550" strokeWidth="1.6" strokeLinecap="round" /><path d="M42.5 29 L36 30.5" stroke="#3a3550" strokeWidth="1.6" strokeLinecap="round" />
+      <circle cx="26" cy="33" r="3" fill="#20202f" /><circle cx="38" cy="33" r="3" fill="#20202f" />
+      <circle cx="27" cy="32.1" r="0.9" fill="#fff" /><circle cx="39" cy="32.1" r="0.9" fill="#fff" />
+      <ellipse cx="32" cy="38.5" rx="2.7" ry="2" fill="#20202f" />
+      <path d="M32 40.5 Q28 44 25 42" stroke="#20202f" strokeWidth="1.4" fill="none" strokeLinecap="round" /><path d="M32 40.5 Q36 44 39 42" stroke="#20202f" strokeWidth="1.4" fill="none" strokeLinecap="round" />
+      <circle cx="45" cy="45" r="7.5" fill="rgba(255,255,255,.18)" stroke="#20202f" strokeWidth="2.4" /><path d="M50.4 50.4 L57 57" stroke="#20202f" strokeWidth="3.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export default function App() {
   const { connection } = useConnection();
   const { publicKey, sendTransaction, connected } = useWallet();
@@ -81,7 +99,7 @@ export default function App() {
   return (
     <div className="wrap">
       <header>
-        <div className="brand">Solana <span>Security Watch</span></div>
+        <div className="brand"><Logo size={34} /><span className="bt">Solana <span className="g">Watchdog</span></span></div>
         <nav className="nav">
           <a href="#offers">Offers</a>
           <a href="#proof">Proof</a>

@@ -8,7 +8,8 @@ body{margin:0;background:radial-gradient(1200px 600px at 70% -10%, #1b1b3d 0%, v
 a{color:var(--accent2);text-decoration:none} a:hover{text-decoration:underline}
 .wrap{max-width:960px;margin:0 auto;padding:0 20px}
 header{padding:22px 0;display:flex;align-items:center;justify-content:space-between}
-.brand{font-weight:800;letter-spacing:.2px} .brand span{color:var(--accent2)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.2px}
+.brand .bt{color:var(--fg)} .brand .g{color:var(--accent2)}
 .nav a{color:var(--muted);margin-left:20px;font-size:.92rem}
 .hero{padding:56px 0 30px;text-align:center}
 .hero h1{font-size:2.5rem;line-height:1.12;margin:0 0 14px}
