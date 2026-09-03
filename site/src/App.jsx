@@ -10,7 +10,7 @@ import {
 
 const API_BASE = import.meta.env.VITE_API_BASE || "https://solana-security-watchdog-scan.fly.dev";
 const WALLET = import.meta.env.VITE_MERCHANT_WALLET || "7yMnWMrxzZ3YCtWXRsZEhAFwexHoJzBJy8RgN7Lhvy1P";
-const AMOUNT = Number(import.meta.env.VITE_AMOUNT_USDC || 0.1);
+const AMOUNT = Number(import.meta.env.VITE_AMOUNT_USDC || 69);
 const CONTACT = import.meta.env.VITE_CONTACT || "solanawatchdog@proton.me";
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const MEMO_PROGRAM = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
