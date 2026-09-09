@@ -177,6 +177,86 @@ function checkHygiene(dir) {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Advisory triage: on-chain surface vs toolchain.
+//
+// A Solana Cargo.lock is dominated by crates that never reach the deployed BPF
+// binary: solana-cli, solana-client, the test validator and the build tooling
+// drag in openssl, quinn, rustls, tokio, hyper... Reporting those next to a
+// borsh advisory reads as noise and, worse, invites the reply "openssl isn't in
+// our program". So we split the advisories three ways and lead with the one
+// bucket that describes deployed on-chain risk.
+//
+// A crate counts as on-chain when it is either declared by a program crate in
+// this repo (one whose Cargo.toml sets crate-type = cdylib) or a known member of
+// the solana-program / anchor-lang runtime surface that a program pulls in
+// transitively. This is a heuristic, and the report says so: it is a triage aid,
+// not a substitute for `cargo tree` on the program crate.
+const ONCHAIN_RUNTIME = new Set([
+  "solana-program", "solana-security-txt", "anchor-lang", "anchor-spl",
+  "anchor-attribute-account", "anchor-attribute-program", "anchor-derive-accounts",
+  "borsh", "borsh-derive", "bytemuck", "bytemuck_derive", "arrayref", "zerocopy",
+  "num-traits", "num-derive", "num-bigint", "num-integer", "thiserror",
+  "serde", "serde_derive", "serde_bytes", "bs58", "base64",
+  "sha2", "sha3", "keccak", "blake3", "digest", "hmac",
+  "curve25519-dalek", "ed25519-dalek", "libsecp256k1", "bincode",
+  "spl-token", "spl-token-2022", "spl-associated-token-account", "spl-memo",
+  "spl-pod", "spl-discriminator", "spl-type-length-value",
+  "spl-token-metadata-interface", "spl-token-group-interface",
+  "hashbrown", "ahash", "itertools", "memoffset", "getrandom",
+]);
+
+// RustSec "unmaintained"/"unsound" housekeeping advisories are supply-chain
+// signal, not an exploitable defect — they get their own bucket so they never
+// inflate the headline number.
+const HOUSEKEEPING_RE = /\bunmaintained\b|no longer maintained|is deprecated/i;
+
+// Direct dependencies declared by every program crate in the repo (crate-type
+// containing "cdylib"). Minimal TOML walk: we only need dependency NAMES.
+export function findProgramDeps(dir) {
+  const names = new Set();
+  for (const f of findFiles(dir, (n) => n === "Cargo.toml")) {
+    let t;
+    try { t = readFileSync(f, "utf8"); } catch { continue; }
+    if (!/crate-type\s*=\s*\[[^\]]*cdylib/.test(t)) continue;
+    let inDeps = false;
+    for (const raw of t.split("\n")) {
+      const line = raw.trim();
+      const header = line.match(/^\[([^\]]+)\]/);
+      if (header) {
+        const h = header[1];
+        // [dependencies], [target.'cfg(..)'.dependencies], [dependencies.foo]
+        const sub = h.match(/(?:^|\.)(?:dev-|build-)?dependencies\.(.+)$/);
+        if (sub) { names.add(sub[1].replace(/["']/g, "").trim()); inDeps = false; continue; }
+        inDeps = /(?:^|\.)dependencies$/.test(h) && !/(?:^|\.)(?:dev|build)-dependencies$/.test(h);
+        continue;
+      }
+      if (!inDeps) continue;
+      const m = line.match(/^([A-Za-z0-9_-]+)\s*=/);
+      if (m) names.add(m[1]);
+    }
+  }
+  return names;
+}
+
+// Split advisories into { onchain, toolchain, housekeeping }. Each advisory keeps
+// an `onchain` flag so a housekeeping entry on an on-chain crate can still say so.
+export function triageAdvisories(advisories, programDeps) {
+  const isOnchain = (a) =>
+    a.crates.some((c) => {
+      const name = c.replace(/\s+[^\s]+$/, "");
+      return ONCHAIN_RUNTIME.has(name) || programDeps.has(name);
+    });
+  const out = { onchain: [], toolchain: [], housekeeping: [] };
+  for (const a of advisories) {
+    const flagged = { ...a, onchain: isOnchain(a) };
+    if (HOUSEKEEPING_RE.test(a.summary)) out.housekeeping.push(flagged);
+    else if (flagged.onchain) out.onchain.push(flagged);
+    else out.toolchain.push(flagged);
+  }
+  return out;
+}
+
 function esc(s) {
   return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 }
@@ -191,15 +271,42 @@ function renderReport(meta, deps, hygiene, source) {
   md.push("> A hygiene + known-class scan, not an audit. Dependency advisories below are matched against your **exact pinned versions**. Code items are **leads to confirm by reading**, not confirmed vulnerabilities. This scan does not certify the absence of bugs.");
   md.push("");
 
+  const bk = deps.buckets;
+  const line = (a) => [
+    `- **[${a.severity}]** [${a.id}](${a.url})${a.onchain ? " · _on-chain crate_" : ""} — ${a.summary}`,
+    `  affects: ${a.crates.join(", ")}`,
+  ];
+
   md.push("## 1. Dependency advisories (your pinned versions)");
   md.push("");
   if (deps.advisories.length === 0) {
     md.push("No RustSec/OSV advisory affects the exact versions pinned in `Cargo.lock`. ✅");
   } else {
-    for (const a of deps.advisories) {
-      md.push(`- **[${a.severity}]** [${a.id}](${a.url}) — ${a.summary}`);
-      md.push(`  affects: ${a.crates.join(", ")}`);
-    }
+    md.push(`${deps.advisories.length} advisories affect your pinned versions. They are split by whether the affected crate reaches the **deployed program**, because most of a Solana lockfile is CLI, RPC-client and test-validator tooling that never enters the BPF binary.`);
+    md.push("");
+
+    md.push(`### 1a. On-chain surface — ${bk.onchain.length}`);
+    md.push("");
+    md.push("_Advisories on crates the deployed program links against. Read these first._");
+    md.push("");
+    if (bk.onchain.length === 0) md.push("None. ✅");
+    else for (const a of bk.onchain) md.push(...line(a));
+    md.push("");
+
+    md.push(`### 1b. Toolchain & off-chain — ${bk.toolchain.length}`);
+    md.push("");
+    md.push("_CLI, RPC client, test validator, build tooling. Not in the deployed binary — but they run on your machines and in CI._");
+    md.push("");
+    if (bk.toolchain.length === 0) md.push("None.");
+    else for (const a of bk.toolchain) md.push(...line(a));
+    md.push("");
+
+    md.push(`### 1c. Unmaintained crates — ${bk.housekeeping.length}`);
+    md.push("");
+    md.push("_No known exploitable defect. Supply-chain exposure: an unmaintained crate gets no patch when one is eventually needed._");
+    md.push("");
+    if (bk.housekeeping.length === 0) md.push("None.");
+    else for (const a of bk.housekeeping) md.push(...line(a));
   }
   if (deps.failures) md.push(`\n_(${deps.failures} crate quer${deps.failures === 1 ? "y" : "ies"} could not be reached.)_`);
   md.push("");
@@ -252,19 +359,38 @@ function sevBg(s) {
 
 function renderHtml(meta, deps, hygiene, source, classes) {
   const nAdv = deps.advisories.length;
+  const bk = deps.buckets;
   const nLeads = classes.reduce((s, [, e]) => s + e.total, 0);
-  const worst = deps.advisories.reduce((w, a) => {
+  // Highest severity is reported for the ON-CHAIN bucket: a HIGH on an openssl
+  // pulled in by the CLI says nothing about the deployed program.
+  const worst = bk.onchain.reduce((w, a) => {
     const rank = { CRITICAL: 4, HIGH: 3, MODERATE: 3, MEDIUM: 3, LOW: 2 };
     const r = rank[String(a.severity).toUpperCase().split(" ")[0]] || 1;
     return r > w.r ? { r, label: a.severity } : w;
   }, { r: 0, label: "—" });
 
-  const depCards = nAdv
-    ? deps.advisories.map((a) => `<div class="adv">
+  const card = (a) => `<div class="adv">
         <span class="chip" style="background:${sevBg(a.severity)}">${esc(a.severity)}</span>
-        <div class="adv-body"><a class="adv-id" href="${esc(a.url)}">${esc(a.id)}</a>
+        <div class="adv-body"><a class="adv-id" href="${esc(a.url)}">${esc(a.id)}</a>${a.onchain ? `<span class="oc">on-chain crate</span>` : ""}
         <div class="adv-sum">${esc(a.summary)}</div>
-        <div class="adv-pkg">Affects: ${esc(a.crates.join(", "))}</div></div></div>`).join("")
+        <div class="adv-pkg">Affects: ${esc(a.crates.join(", "))}</div></div></div>`;
+
+  const group = (title, note, list, emptyText) => `<div class="grp">
+      <div class="grp-head"><span class="grp-title">${esc(title)}</span><span class="grp-n">${list.length}</span></div>
+      <p class="muted">${note}</p>
+      ${list.length ? list.map(card).join("") : `<div class="none">${esc(emptyText)}</div>`}
+    </div>`;
+
+  const depCards = nAdv
+    ? group("On-chain surface",
+        "Advisories on crates the deployed program links against. <b>Read these first.</b>",
+        bk.onchain, "None — clean on the deployed surface.") +
+      group("Toolchain & off-chain",
+        "CLI, RPC client, test validator, build tooling. Not in the deployed binary — but they run on your machines and in CI.",
+        bk.toolchain, "None.") +
+      group("Unmaintained crates",
+        "No known exploitable defect. Supply-chain exposure: an unmaintained crate gets no patch when one is eventually needed.",
+        bk.housekeeping, "None.")
     : `<div class="clean">✓ &nbsp;No advisory affects the exact versions pinned in your <code>Cargo.lock</code>.</div>`;
 
   const ocOk = hygiene.overflowChecks === true;
@@ -301,7 +427,14 @@ body{margin:0;background:#eceef4;color:#1c2030;font:15px/1.6 -apple-system,Blink
 .pill{font-size:.74rem;font-weight:700;padding:.22rem .6rem;border-radius:999px;background:#eef0f6;color:#5b6178}
 .pill.warn{background:#fff2e8;color:#c2410c}
 .body{padding:14px 34px 30px}
-.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:18px 0 8px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0 8px}
+@media(max-width:640px){.stats{grid-template-columns:repeat(2,1fr)}}
+.grp{margin:18px 0 6px}
+.grp-head{display:flex;align-items:center;gap:10px;padding-bottom:2px}
+.grp-title{font-weight:700;font-size:1.02rem;color:#1c2030}
+.grp-n{background:#eceef4;color:#4a5069;border-radius:999px;padding:1px 10px;font-size:.8rem;font-weight:700}
+.none{color:#0a7d43;background:#effaf3;border:1px solid #c9eed7;border-radius:10px;padding:9px 13px;font-size:.88rem;font-weight:600}
+.oc{margin-left:8px;background:#f3ecff;color:#5b2bc4;border:1px solid #e0d2ff;border-radius:999px;padding:1px 8px;font-size:.72rem;font-weight:700;vertical-align:1px}
 .stat{background:#f7f8fc;border:1px solid #eaecf3;border-radius:14px;padding:16px 18px}
 .stat .num{font-size:2rem;font-weight:800;line-height:1}
 .stat .lab{color:#6b7188;font-size:.8rem;margin-top:6px}
@@ -349,13 +482,14 @@ a{color:#6d3bd6}
   </div>
   <div class="body">
     <div class="stats">
-      <div class="stat ${nAdv ? "alert" : ""}"><div class="num">${nAdv}</div><div class="lab">Dependency advisories<br>on your pinned versions</div></div>
+      <div class="stat ${bk.onchain.length ? "alert" : ""}"><div class="num">${bk.onchain.length}</div><div class="lab">On-chain advisories<br>on the deployed surface</div></div>
+      <div class="stat"><div class="num">${bk.toolchain.length + bk.housekeeping.length}</div><div class="lab">Toolchain &amp; unmaintained<br>off the deployed binary</div></div>
       <div class="stat"><div class="num">${nLeads}</div><div class="lab">Code leads<br>across ${classes.length} classes</div></div>
-      <div class="stat"><div class="num">${worst.label === "—" ? "—" : esc(String(worst.label).split(" ")[0])}</div><div class="lab">Highest advisory<br>severity</div></div>
+      <div class="stat"><div class="num">${worst.label === "—" ? "—" : esc(String(worst.label).split(" ")[0])}</div><div class="lab">Highest severity<br>on-chain</div></div>
     </div>
 
     <h2>Dependency advisories</h2>
-    <p class="muted">Matched against the exact npm/crate versions pinned in your lockfile.</p>
+    <p class="muted">${nAdv} advisories match the exact crate versions pinned in your lockfile, split by whether the affected crate reaches the deployed program. Most of a Solana lockfile is CLI, RPC-client and test-validator tooling that never enters the BPF binary.</p>
     ${depCards}
 
     <h2>Build hygiene</h2>
@@ -403,6 +537,8 @@ export async function runScan(opts = {}) {
   const deps = crates.length
     ? await scanDependencies(crates, fetchImpl, log)
     : { advisories: [], failures: 0 };
+  const programDeps = findProgramDeps(dir);
+  deps.buckets = triageAdvisories(deps.advisories, programDeps);
   const hygiene = checkHygiene(dir);
   const source = scanSource(dir);
 
@@ -417,7 +553,7 @@ export async function runScan(opts = {}) {
   writeFileSync(mdPath, md);
   writeFileSync(htmlPath, html);
 
-  log(`[scan] ${deps.advisories.length} dep advisories · ${[...source.byClass.values()].reduce((s, e) => s + e.total, 0)} code leads · ${source.totalFiles} files`);
+  log(`[scan] ${deps.buckets.onchain.length} on-chain advisories (of ${deps.advisories.length} total: ${deps.buckets.toolchain.length} toolchain, ${deps.buckets.housekeeping.length} unmaintained) · ${[...source.byClass.values()].reduce((s, e) => s + e.total, 0)} code leads · ${source.totalFiles} files`);
   log(`[scan] report -> ${mdPath}`);
   log(`[scan] report -> ${htmlPath}`);
   return { meta, deps, hygiene, source, mdPath, htmlPath, cleanup };

@@ -80,21 +80,27 @@ async function runJob(jobId) {
     );
     const html = readFileSync(result.htmlPath, "utf8");
     const md = readFileSync(result.mdPath, "utf8");
+    // Lead with the on-chain bucket, not the raw total: most of a Solana lockfile
+    // is CLI/test-validator tooling, so a raw count puts an openssl advisory at
+    // the top of the mail and buries the borsh one that actually ships on-chain.
+    const bk = result.deps.buckets;
+    const onchainN = bk.onchain.length;
+    const offchainN = bk.toolchain.length + bk.housekeeping.length;
     const depN = result.deps.advisories.length;
     const leadN = [...result.source.byClass.values()].reduce((s, e) => s + e.total, 0);
-    const top = result.deps.advisories.slice(0, 3).map((a) => `- [${a.severity}] ${a.id} — ${a.summary}`).join("\n");
+    const top = bk.onchain.slice(0, 3).map((a) => `- [${a.severity}] ${a.id} — ${a.summary}`).join("\n");
     await sendReport({
       to: job.email,
       subject: `Your Solana security scan — ${result.meta.owner}/${result.meta.repo}`,
-      text: `Scan complete for ${job.repo}.\n\n${depN} dependency advisories on your pinned versions, ${leadN} code leads.\n\nTop advisories:\n${top || "(none)"}\n\nFull report attached.`,
+      text: `Scan complete for ${job.repo}.\n\n${onchainN} advisories on the on-chain surface (crates your deployed program links against), ${offchainN} more on toolchain and unmaintained crates, ${leadN} code leads.\n\nOn-chain advisories:\n${top || "(none — clean on the deployed surface)"}\n\nFull report attached.`,
       html: `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:560px;margin:auto;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #eaecf3">
 <div style="background:#160b2e;padding:18px 22px;border-bottom:3px solid #14F195">
 <span style="color:#fff;font-weight:800;letter-spacing:.5px;font-size:16px">SOLANA <span style="color:#14F195">WATCHDOG</span></span>
 <div style="color:#a9b0cf;font-size:12px;margin-top:3px">Dependency &amp; known-class security scan</div></div>
 <div style="padding:22px">
 <p style="margin:0 0 12px;font-size:15px;color:#1c2030">Scan complete for <b>${result.meta.owner}/${result.meta.repo}</b>.</p>
-<p style="margin:0 0 14px;color:#1c2030"><b style="font-size:20px">${depN}</b> dependency advisories on your pinned versions &nbsp;&middot;&nbsp; <b style="font-size:20px">${leadN}</b> code leads</p>
-${top ? `<div style="background:#f7f8fc;border:1px solid #eaecf3;border-radius:10px;padding:12px 14px;font-size:13px;color:#333;white-space:pre-wrap;font-family:ui-monospace,Menlo,monospace">${top.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>` : ""}
+<p style="margin:0 0 14px;color:#1c2030"><b style="font-size:20px">${onchainN}</b> advisories on your <b>on-chain surface</b> &nbsp;&middot;&nbsp; <b style="font-size:20px">${offchainN}</b> on toolchain / unmaintained crates &nbsp;&middot;&nbsp; <b style="font-size:20px">${leadN}</b> code leads</p>
+${top ? `<div style="background:#f7f8fc;border:1px solid #eaecf3;border-radius:10px;padding:12px 14px;font-size:13px;color:#333;white-space:pre-wrap;font-family:ui-monospace,Menlo,monospace">${top.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>` : `<div style="background:#effaf3;border:1px solid #c9eed7;border-radius:10px;padding:12px 14px;font-size:13px;color:#0a7d43;font-weight:600">No advisory affects the crates your deployed program links against.</div>`}
 <p style="margin:16px 0 0;color:#1c2030">The full report is attached &mdash; open the <b>.html</b> for the branded version.</p>
 <p style="margin:14px 0 0;color:#8189a3;font-size:12px">A hygiene + known-class scan, not an audit. It does not certify the absence of bugs.</p></div></div>`,
       attachments: [
@@ -102,7 +108,7 @@ ${top ? `<div style="background:#f7f8fc;border:1px solid #eaecf3;border-radius:1
         { filename: `${result.meta.owner}-${result.meta.repo}-scan.md`, content: Buffer.from(md).toString("base64") },
       ],
     });
-    store.update(jobId, { status: "done", depAdvisories: depN, codeLeads: leadN, deliveredAt: new Date().toISOString() });
+    store.update(jobId, { status: "done", depAdvisories: depN, onchainAdvisories: onchainN, codeLeads: leadN, deliveredAt: new Date().toISOString() });
   } catch (e) {
     store.update(jobId, { status: "error", error: String(e.message).slice(0, 300) });
     console.error(`[job ${jobId}] failed:`, e.message);
