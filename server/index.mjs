@@ -11,7 +11,8 @@
 //
 // Zero runtime deps: Node http + fetch only.
 import { createServer } from "node:http";
-import { mkdtempSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,7 +21,7 @@ import { runScan, parseGithubUrl } from "../bin/scan.mjs";
 import { Store } from "./store.mjs";
 import { Queue } from "./queue.mjs";
 import { sendReport } from "./email.mjs";
-import { verifyUsdcPayment } from "./verify.mjs";
+import { verifyUsdcPayment, USDC_MINT } from "./verify.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -34,7 +35,12 @@ const PAY_INSTRUCTIONS =
   process.env.PAY_INSTRUCTIONS ||
   "Payment instructions not configured. Set PAY_INSTRUCTIONS (e.g. a USDC address or a Stripe link).";
 
-const store = new Store(process.env.JOBS_FILE || join(__dirname, "data", "jobs.json"));
+const JOBS_FILE = process.env.JOBS_FILE || join(__dirname, "data", "jobs.json");
+// Agent jobs have no inbox to email a report to, so their reports are kept here
+// (next to the job store, i.e. on the persistent volume in prod).
+const REPORTS_DIR = process.env.REPORTS_DIR || join(dirname(JOBS_FILE), "reports");
+const PUBLIC_BASE = (process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
+const store = new Store(JOBS_FILE);
 const queue = new Queue();
 
 // --- tiny per-IP rate limit (protects the create endpoint) ---
@@ -80,6 +86,12 @@ async function runJob(jobId) {
     );
     const html = readFileSync(result.htmlPath, "utf8");
     const md = readFileSync(result.mdPath, "utf8");
+    if (job.agent) {
+      mkdirSync(REPORTS_DIR, { recursive: true });
+      writeFileSync(join(REPORTS_DIR, `${jobId}.html`), html);
+      writeFileSync(join(REPORTS_DIR, `${jobId}.md`), md);
+      writeFileSync(join(REPORTS_DIR, `${jobId}.json`), JSON.stringify(summarize(result), null, 2) + "\n");
+    }
     // Lead with the on-chain bucket, not the raw total: most of a Solana lockfile
     // is CLI/test-validator tooling, so a raw count puts an openssl advisory at
     // the top of the mail and buries the borsh one that actually ships on-chain.
@@ -89,7 +101,7 @@ async function runJob(jobId) {
     const depN = result.deps.advisories.length;
     const leadN = [...result.source.byClass.values()].reduce((s, e) => s + e.total, 0);
     const top = bk.onchain.slice(0, 3).map((a) => `- [${a.severity}] ${a.id} — ${a.summary}`).join("\n");
-    await sendReport({
+    if (job.email) await sendReport({
       to: job.email,
       subject: `Your Solana security scan — ${result.meta.owner}/${result.meta.repo}`,
       text: `Scan complete for ${job.repo}.\n\n${onchainN} advisories on the on-chain surface (crates your deployed program links against), ${offchainN} more on toolchain and unmaintained crates, ${leadN} code leads.\n\nOn-chain advisories:\n${top || "(none — clean on the deployed surface)"}\n\nFull report attached.`,
@@ -115,6 +127,81 @@ ${top ? `<div style="background:#f7f8fc;border:1px solid #eaecf3;border-radius:1
   }
 }
 
+// --- agent-payable scan -------------------------------------------------------
+// An agent cannot click a wallet button, so it gets the same scan through an
+// HTTP 402 handshake: ask, get the price + a one-job memo, pay, prove, poll.
+// The job id is written on-chain in the memo, so it is public: reading the
+// report takes a separate bearer token, handed out once and stored hashed.
+
+function summarize(result) {
+  const bk = result.deps.buckets;
+  return {
+    repo: `${result.meta.owner}/${result.meta.repo}`,
+    date: result.meta.date,
+    counts: {
+      onchainAdvisories: bk.onchain.length,
+      toolchainAdvisories: bk.toolchain.length,
+      unmaintainedCrates: bk.housekeeping.length,
+      codeLeads: [...result.source.byClass.values()].reduce((s, e) => s + e.total, 0),
+    },
+    onchainAdvisories: bk.onchain,
+    toolchainAdvisories: bk.toolchain,
+    unmaintainedCrates: bk.housekeeping,
+    hygiene: result.hygiene,
+    codeLeads: [...result.source.byClass.entries()].map(([cls, e]) => ({ class: cls, label: e.label, total: e.total, hits: e.hits })),
+    disclaimer: "A dependency + known-class scan, not an audit. It does not certify the absence of bugs.",
+  };
+}
+
+const hashToken = (t) => createHash("sha256").update(String(t)).digest("hex");
+function agentAuthorized(req, job) {
+  const m = /^Bearer (\S+)$/.exec(req.headers.authorization || "");
+  if (!m || !job || !job.accessTokenHash) return false;
+  const a = Buffer.from(hashToken(m[1]), "hex");
+  const b = Buffer.from(job.accessTokenHash, "hex");
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function paymentRequired(job) {
+  return {
+    error: "payment_required",
+    x402Version: 1,
+    accepts: [{
+      scheme: "exact",
+      network: "solana",
+      asset: USDC_MINT,
+      maxAmountRequired: String(Math.round(job.priceUsd * 1e6)),
+      payTo: MERCHANT_WALLET,
+      resource: `${PUBLIC_BASE}/agent/scan`,
+      description: `Solana Watchdog dependency + known-class scan of ${job.repo}`,
+      mimeType: "application/json",
+      maxTimeoutSeconds: 3600,
+      extra: { decimals: 6, memo: job.memo },
+    }],
+    jobId: job.id,
+    accessToken: job._accessToken,
+    amountUsdc: job.priceUsd,
+    howToPay: `Send ${job.priceUsd} USDC (SPL, mint ${USDC_MINT}) on Solana mainnet to ${MERCHANT_WALLET}, in a transaction that also carries an SPL Memo instruction with the exact text "${job.memo}". Then POST ${PUBLIC_BASE}/agent/scan with {"jobId":"${job.id}","signature":"<tx signature>"}. Keep accessToken: it is shown once and is the only way to read the report.`,
+    manual: `${PUBLIC_BASE}/skill.md`,
+  };
+}
+
+function agentJobView(job) {
+  const view = {
+    jobId: job.id, status: job.status, repo: job.repo, amountUsdc: job.priceUsd,
+    createdAt: job.createdAt, paidAt: job.paidAt || null, deliveredAt: job.deliveredAt || null,
+  };
+  if (job.status === "error") view.error = job.error;
+  if (job.status === "done") {
+    const base = `${PUBLIC_BASE}/agent/jobs/${job.id}/report`;
+    view.summary = { onchainAdvisories: job.onchainAdvisories, totalAdvisories: job.depAdvisories, codeLeads: job.codeLeads };
+    view.report = { json: `${base}.json`, markdown: `${base}.md`, html: `${base}.html` };
+  }
+  return view;
+}
+
+const SKILL_MD = existsSync(join(__dirname, "skill.md")) ? readFileSync(join(__dirname, "skill.md"), "utf8") : "";
+
 const server = createServer(async (req, res) => {
   const ip = req.socket.remoteAddress || "?";
   const url = new URL(req.url, `http://localhost:${PORT}`);
@@ -122,6 +209,72 @@ const server = createServer(async (req, res) => {
 
   try {
     if (req.method === "GET" && url.pathname === "/health") return send(res, 200, { ok: true });
+
+    if (req.method === "GET" && (url.pathname === "/skill.md" || url.pathname === "/agent")) {
+      return send(res, 200, SKILL_MD
+        .replaceAll("{{BASE}}", PUBLIC_BASE)
+        .replaceAll("{{PRICE}}", String(PRICE_USD))
+        .replaceAll("{{MERCHANT}}", MERCHANT_WALLET || "(not configured)"), { "content-type": "text/markdown; charset=utf-8" });
+    }
+
+    if (req.method === "POST" && url.pathname === "/agent/scan") {
+      if (!MERCHANT_WALLET) return send(res, 503, { error: "payments not configured" });
+      if (rateLimited(ip)) return send(res, 429, { error: "rate limited" });
+      const body = await readBody(req);
+
+      // Step 2: prove payment for a job created in step 1.
+      if (body.jobId || body.signature) {
+        const job = store.get(body.jobId);
+        if (!job || !job.agent) return send(res, 404, { error: "unknown jobId" });
+        if (typeof body.signature !== "string" || !body.signature) return send(res, 400, { error: "signature required" });
+        if (job.status !== "pending_payment") return send(res, 409, { error: `job already ${job.status}`, statusUrl: `${PUBLIC_BASE}/agent/jobs/${job.id}` });
+        if (store.findBySignature(body.signature)) return send(res, 409, { error: "payment signature already used" });
+        const result = await verifyUsdcPayment({
+          signature: body.signature,
+          amountUsdc: job.priceUsd,
+          merchant: MERCHANT_WALLET,
+          rpcUrl: SOLANA_RPC_URL,
+          memo: job.memo,
+        });
+        if (!result.ok) return send(res, 402, { error: `payment not verified: ${result.reason}`, jobId: job.id });
+        // Re-check after the await: two concurrent proofs must not both win.
+        if (store.findBySignature(body.signature) || store.get(job.id).status !== "pending_payment")
+          return send(res, 409, { error: "payment already credited" });
+        store.update(job.id, { status: "paid", paidAt: new Date().toISOString(), paymentSignature: body.signature });
+        queue.enqueue(() => runJob(job.id));
+        return send(res, 202, { jobId: job.id, status: "paid", statusUrl: `${PUBLIC_BASE}/agent/jobs/${job.id}`, poll: "GET statusUrl with Authorization: Bearer <accessToken> every 15s; a scan takes about a minute." });
+      }
+
+      // Step 1: quote. Creates the job and answers 402 with what to pay.
+      let repoInfo;
+      try { repoInfo = parseGithubUrl(body.repo || ""); }
+      catch (e) { return send(res, 400, { error: e.message }); }
+      if (body.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(body.email))
+        return send(res, 400, { error: "email is optional, but this one is not valid" });
+      const accessToken = randomBytes(24).toString("base64url");
+      const job = store.create({
+        repo: repoInfo.url,
+        email: body.email || null,
+        priceUsd: PRICE_USD,
+        agent: true,
+        memo: `ssw:${randomBytes(9).toString("base64url")}`,
+        accessTokenHash: hashToken(accessToken),
+      });
+      return send(res, 402, paymentRequired({ ...job, _accessToken: accessToken }));
+    }
+
+    if (req.method === "GET" && url.pathname.startsWith("/agent/jobs/")) {
+      const m = /^\/agent\/jobs\/([0-9a-f-]{36})(?:\/report\.(json|md|html))?$/.exec(url.pathname);
+      if (!m) return send(res, 404, { error: "not found" });
+      const job = store.get(m[1]);
+      if (!job || !job.agent || !agentAuthorized(req, job)) return send(res, 404, { error: "unknown jobId or wrong access token" });
+      if (!m[2]) return send(res, 200, agentJobView(job));
+      if (job.status !== "done") return send(res, 409, { error: `report not ready, job is ${job.status}` });
+      const f = join(REPORTS_DIR, `${job.id}.${m[2]}`);
+      if (!existsSync(f)) return send(res, 410, { error: "report no longer stored" });
+      const types = { json: "application/json", md: "text/markdown; charset=utf-8", html: "text/html; charset=utf-8" };
+      return send(res, 200, readFileSync(f, "utf8"), { "content-type": types[m[2]] });
+    }
 
     if (req.method === "POST" && url.pathname === "/scan") {
       if (rateLimited(ip)) return send(res, 429, { error: "rate limited" });
@@ -190,7 +343,8 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname.startsWith("/jobs/")) {
       const job = store.get(url.pathname.split("/")[2]);
       if (!job) return send(res, 404, { error: "unknown jobId" });
-      const { email, ...safe } = job; // don't leak email on a public status endpoint
+      // don't leak email (or an agent job's token hash / memo) on a public endpoint
+      const { email, accessTokenHash, memo, ...safe } = job;
       return send(res, 200, safe);
     }
 

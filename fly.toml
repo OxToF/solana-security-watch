@@ -12,7 +12,8 @@ primary_region = "cdg"
 [env]
   PORT = "8080"
   JOBS_FILE = "/data/jobs.json"
-  SCAN_PRICE_USD = "80"
+  PUBLIC_BASE_URL = "https://solana-security-watchdog-scan.fly.dev"
+  SCAN_PRICE_USD = "69"
 
 [[mounts]]
   source = "sswdata"

@@ -46,6 +46,7 @@
   "scripts": {
     "collect": "node bin/cli.mjs collect --out watch-reports",
     "test:pocs": "bash poc/run-all.sh",
+    "test:server": "node --test server/agent.test.mjs",
     "test": "bash poc/run-all.sh"
   }
 }
