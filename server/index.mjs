@@ -202,6 +202,9 @@ function agentJobView(job) {
 
 const SKILL_MD = existsSync(join(__dirname, "skill.md")) ? readFileSync(join(__dirname, "skill.md"), "utf8") : "";
 
+// Provider RPC URLs carry their API key (Helius: ?api-key=): log the host only.
+function rpcHost(u) { try { return new URL(u).host; } catch { return "(unparseable RPC URL)"; } }
+
 const server = createServer(async (req, res) => {
   const ip = req.socket.remoteAddress || "?";
   const url = new URL(req.url, `http://localhost:${PORT}`);
@@ -363,7 +366,7 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`[server] solana-security-watch scan backend on :${PORT}`);
   console.log(`[server] admin ${ADMIN_TOKEN ? "enabled" : "DISABLED (set ADMIN_TOKEN)"} · email ${process.env.RESEND_API_KEY ? "Resend" : "DEV mode (disk)"} · price ${PRICE_USD} USDC`);
-  console.log(`[server] payments ${MERCHANT_WALLET ? "on -> " + MERCHANT_WALLET : "OFF (set MERCHANT_WALLET to enable /pay/verify)"} · rpc ${SOLANA_RPC_URL}`);
+  console.log(`[server] payments ${MERCHANT_WALLET ? "on -> " + MERCHANT_WALLET : "OFF (set MERCHANT_WALLET to enable /pay/verify)"} · rpc ${rpcHost(SOLANA_RPC_URL)}`);
 });
 
 export { server };
