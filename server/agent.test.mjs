@@ -138,3 +138,11 @@ test("agent flow: quote, pay, poll", async () => {
   const early = await fetch(`${base}/agent/jobs/${q2.jobId}/report.json`, { headers: { authorization: `Bearer ${q2.accessToken}` } });
   assert.equal(early.status, 409);
 });
+
+test("private report links: a wrong token or an unknown job is a 404, never a report", async () => {
+  const job = await (await fetch(`${base}/scan`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ repo: "https://github.com/OxToF/solana-security-watch", email: "a@b.co" }) })).json();
+  assert.equal((await fetch(`${base}/r/${job.jobId}/${"x".repeat(32)}`)).status, 404);
+  assert.equal((await fetch(`${base}/r/00000000-0000-0000-0000-000000000000/${"x".repeat(32)}`)).status, 404);
+  const pub = await (await fetch(`${base}/jobs/${job.jobId}`)).json();
+  assert.equal("viewTokenHash" in pub, false);
+});
