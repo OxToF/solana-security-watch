@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
-import { runScan, parseGithubUrl } from "../bin/scan.mjs";
+import { runScan, parseGithubUrl, fixMailto } from "../bin/scan.mjs";
 import { Store } from "./store.mjs";
 import { Queue } from "./queue.mjs";
 import { sendReport } from "./email.mjs";
@@ -39,6 +39,7 @@ const JOBS_FILE = process.env.JOBS_FILE || join(__dirname, "data", "jobs.json");
 // Agent jobs have no inbox to email a report to, so their reports are kept here
 // (next to the job store, i.e. on the persistent volume in prod).
 const REPORTS_DIR = process.env.REPORTS_DIR || join(dirname(JOBS_FILE), "reports");
+const CONTACT = process.env.SUPPORT_EMAIL || "solanawatchdog@proton.me";
 const PUBLIC_BASE = (process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
 const store = new Store(JOBS_FILE);
 const queue = new Queue();
@@ -81,17 +82,21 @@ async function runJob(jobId) {
   store.update(jobId, { status: "running" });
   try {
     const out = mkdtempSync(join(tmpdir(), "ssw-job-"));
+    const cta = { contact: CONTACT, ref: jobId };
     const result = await runScan(
-      job.local && ALLOW_LOCAL ? { localPath: job.local, out } : { repoUrl: job.repo, out }
+      job.local && ALLOW_LOCAL ? { localPath: job.local, out, cta } : { repoUrl: job.repo, out, cta }
     );
     const html = readFileSync(result.htmlPath, "utf8");
     const md = readFileSync(result.mdPath, "utf8");
-    if (job.agent) {
-      mkdirSync(REPORTS_DIR, { recursive: true });
-      writeFileSync(join(REPORTS_DIR, `${jobId}.html`), html);
-      writeFileSync(join(REPORTS_DIR, `${jobId}.md`), md);
-      writeFileSync(join(REPORTS_DIR, `${jobId}.json`), JSON.stringify(summarize(result), null, 2) + "\n");
-    }
+    // Every report is kept, so the email can link to it: mail clients show an
+    // attached .html as source code, not as the branded page.
+    mkdirSync(REPORTS_DIR, { recursive: true });
+    writeFileSync(join(REPORTS_DIR, `${jobId}.html`), html);
+    writeFileSync(join(REPORTS_DIR, `${jobId}.md`), md);
+    writeFileSync(join(REPORTS_DIR, `${jobId}.json`), JSON.stringify(summarize(result), null, 2) + "\n");
+    const viewToken = randomBytes(24).toString("base64url");
+    store.update(jobId, { viewTokenHash: hashToken(viewToken) });
+    const viewUrl = `${PUBLIC_BASE}/r/${jobId}/${viewToken}`;
     // Lead with the on-chain bucket, not the raw total: most of a Solana lockfile
     // is CLI/test-validator tooling, so a raw count puts an openssl advisory at
     // the top of the mail and buries the borsh one that actually ships on-chain.
@@ -104,7 +109,7 @@ async function runJob(jobId) {
     if (job.email) await sendReport({
       to: job.email,
       subject: `Your Solana security scan — ${result.meta.owner}/${result.meta.repo}`,
-      text: `Scan complete for ${job.repo}.\n\n${onchainN} advisories on the on-chain surface (crates your deployed program links against), ${offchainN} more on toolchain and unmaintained crates, ${leadN} code leads.\n\nOn-chain advisories:\n${top || "(none — clean on the deployed surface)"}\n\nFull report attached.`,
+      text: `Scan complete for ${job.repo}.\n\n${onchainN} advisories on the on-chain surface (crates your deployed program links against), ${offchainN} more on toolchain and unmaintained crates, ${leadN} code leads.\n\nOn-chain advisories:\n${top || "(none — clean on the deployed surface)"}\n\nView your report: ${viewUrl}\nWant the findings fixed? Write to ${CONTACT} with reference ${jobId}.\n\nThe report is also attached.`,
       html: `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:560px;margin:auto;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #eaecf3">
 <div style="background:#160b2e;padding:18px 22px;border-bottom:3px solid #14F195">
 <span style="color:#fff;font-weight:800;letter-spacing:.5px;font-size:16px">SOLANA <span style="color:#14F195">WATCHDOG</span></span>
@@ -113,7 +118,11 @@ async function runJob(jobId) {
 <p style="margin:0 0 12px;font-size:15px;color:#1c2030">Scan complete for <b>${result.meta.owner}/${result.meta.repo}</b>.</p>
 <p style="margin:0 0 14px;color:#1c2030"><b style="font-size:20px">${onchainN}</b> advisories on your <b>on-chain surface</b> &nbsp;&middot;&nbsp; <b style="font-size:20px">${offchainN}</b> on toolchain / unmaintained crates &nbsp;&middot;&nbsp; <b style="font-size:20px">${leadN}</b> code leads</p>
 ${top ? `<div style="background:#f7f8fc;border:1px solid #eaecf3;border-radius:10px;padding:12px 14px;font-size:13px;color:#333;white-space:pre-wrap;font-family:ui-monospace,Menlo,monospace">${top.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>` : `<div style="background:#effaf3;border:1px solid #c9eed7;border-radius:10px;padding:12px 14px;font-size:13px;color:#0a7d43;font-weight:600">No advisory affects the crates your deployed program links against.</div>`}
-<p style="margin:16px 0 0;color:#1c2030">The full report is attached &mdash; open the <b>.html</b> for the branded version.</p>
+<table role="presentation" cellspacing="0" cellpadding="0" style="margin:18px 0 0"><tr>
+<td style="padding:0 8px 8px 0"><a href="${viewUrl}" style="display:inline-block;background:#6d3bd6;color:#ffffff;font-weight:700;text-decoration:none;border-radius:10px;padding:12px 18px">View your report</a></td>
+<td style="padding:0 0 8px 0"><a href="${fixMailto(cta, result.meta, `Fix request: ${result.meta.owner}/${result.meta.repo}`, [`On-chain advisories: ${onchainN}`, `Code leads: ${leadN}`])}" style="display:inline-block;background:#ffffff;color:#6d3bd6;font-weight:700;text-decoration:none;border-radius:10px;padding:11px 17px;border:1px solid #6d3bd6">Get the findings fixed</a></td>
+</tr></table>
+<p style="margin:10px 0 0;color:#5b6178;font-size:13px">The link is private to you. The report is also attached (open the <b>.html</b> in a browser).</p>
 <p style="margin:14px 0 0;color:#8189a3;font-size:12px">A hygiene + known-class scan, not an audit. It does not certify the absence of bugs.</p></div></div>`,
       attachments: [
         { filename: `${result.meta.owner}-${result.meta.repo}-scan.html`, content: Buffer.from(html).toString("base64") },
@@ -212,6 +221,19 @@ const server = createServer(async (req, res) => {
 
   try {
     if (req.method === "GET" && url.pathname === "/health") return send(res, 200, { ok: true });
+
+    // The private report link from the email: /r/<jobId>/<token>
+    if (req.method === "GET" && url.pathname.startsWith("/r/")) {
+      const m = /^\/r\/([0-9a-f-]{36})\/([A-Za-z0-9_-]{20,64})$/.exec(url.pathname);
+      const job = m && store.get(m[1]);
+      const ok = job && job.viewTokenHash && (() => {
+        const a = Buffer.from(hashToken(m[2]), "hex"), b = Buffer.from(job.viewTokenHash, "hex");
+        return a.length === b.length && timingSafeEqual(a, b);
+      })();
+      const f = ok && join(REPORTS_DIR, `${job.id}.html`);
+      if (!ok || !existsSync(f)) return send(res, 404, "Report not found. Check the link in your email.");
+      return send(res, 200, readFileSync(f, "utf8"), { "content-type": "text/html; charset=utf-8", "x-robots-tag": "noindex, nofollow", "referrer-policy": "no-referrer", "cache-control": "private, no-store" });
+    }
 
     if (req.method === "GET" && (url.pathname === "/skill.md" || url.pathname === "/agent")) {
       return send(res, 200, SKILL_MD
@@ -347,7 +369,7 @@ const server = createServer(async (req, res) => {
       const job = store.get(url.pathname.split("/")[2]);
       if (!job) return send(res, 404, { error: "unknown jobId" });
       // don't leak email (or an agent job's token hash / memo) on a public endpoint
-      const { email, accessTokenHash, memo, ...safe } = job;
+      const { email, accessTokenHash, viewTokenHash, memo, ...safe } = job;
       return send(res, 200, safe);
     }
 
