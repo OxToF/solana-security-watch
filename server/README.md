@@ -16,6 +16,29 @@ GET  /admin/jobs        (admin)      -> all jobs.
 GET  /health
 ```
 
+### Agent flow (pay per call, no human in the loop)
+
+An agent cannot click a wallet button, so it buys the same scan over HTTP 402.
+The full manual an agent reads is served at `GET /skill.md` (source: `server/skill.md`).
+
+```
+POST /agent/scan {repo[,email]}       -> 402 + x402-style `accepts` (payTo, USDC mint,
+                                       amount, extra.memo), jobId, accessToken (shown once).
+POST /agent/scan {jobId, signature}   -> verifies the USDC transfer on-chain AND that the
+                                       same tx carries the job's memo; 202 + queued.
+GET  /agent/jobs/:id                  -> status (Bearer accessToken).
+GET  /agent/jobs/:id/report.{json,md,html} -> the report once done (Bearer accessToken).
+```
+
+The memo is what binds a payment to one job: a transfer signature is public as
+soon as it lands, so without it anyone watching the merchant wallet could credit
+someone else's payment to their own job. The job id is in that public memo, so
+reading a report takes the separate access token, stored only as a hash. Agent
+reports are kept in `REPORTS_DIR` (default: `reports/` next to `JOBS_FILE`).
+
+The 402 body borrows the x402 field names so x402-aware agents can read it, but
+the proof is a confirmed transaction signature, not an x402 facilitator payload.
+
 The `/confirm` gate is the single integration point for payment. Start by
 confirming crypto payments by hand (`Authorization: Bearer $ADMIN_TOKEN`); later
 point a Stripe webhook or an on-chain USDC watcher at the same endpoint.
@@ -44,6 +67,8 @@ Then point the landing page at it: set `window.SSW_ENDPOINT = "https://your-back
 | `RESEND_API_KEY` + `MAIL_FROM` | email delivery via Resend; omit for dev disk mode |
 | `ALLOW_ORIGIN` | CORS origin for the landing page (default `*`) |
 | `JOBS_FILE` | job store path (default `server/data/jobs.json`) |
+| `PUBLIC_BASE_URL` | absolute base used in agent-facing URLs and `/skill.md` |
+| `REPORTS_DIR` | where agent reports are kept (default `reports/` next to `JOBS_FILE`) |
 | `ALLOW_LOCAL` | `1` enables scanning a local path (dev/testing only — never in prod) |
 
 ## Confirm a payment (manual MVP)

@@ -4,12 +4,29 @@
 // decoding). Zero deps — plain fetch to a Solana RPC.
 
 export const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+export const MEMO_PROGRAM_ID = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
+const MEMO_PROGRAM_IDS = new Set([MEMO_PROGRAM_ID, "Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo"]); // v2, v1
+
+// Every memo string the transaction carries, top-level or via CPI. jsonParsed
+// renders an SPL Memo instruction as { program: "spl-memo", programId, parsed: "<text>" }.
+export function memosOf(tx) {
+  const ixs = [...((tx.transaction && tx.transaction.message && tx.transaction.message.instructions) || [])];
+  for (const inner of (tx.meta && tx.meta.innerInstructions) || []) ixs.push(...(inner.instructions || []));
+  return ixs.filter((ix) => MEMO_PROGRAM_IDS.has(ix.programId) && typeof ix.parsed === "string").map((ix) => ix.parsed);
+}
 
 // Verify against the pre/post token balances in a getTransaction result. Exported
 // separately so it can be unit-tested with a synthetic RPC payload (no network).
-export function verifyFromTx(tx, { amountUsdc, merchant, mint = USDC_MINT }) {
+//
+// `memo`, when set, binds the payment to one job: the transfer's signature is
+// public the moment it lands, so without it anyone watching the merchant wallet
+// could claim someone else's payment for their own job before the payer does.
+export function verifyFromTx(tx, { amountUsdc, merchant, mint = USDC_MINT, memo = null }) {
   if (!tx) return { ok: false, reason: "transaction not found or not yet confirmed" };
   if (tx.meta && tx.meta.err) return { ok: false, reason: "transaction failed on-chain" };
+  if (memo !== null && !memosOf(tx).includes(memo)) {
+    return { ok: false, reason: `transaction does not carry the required memo "${memo}"` };
+  }
   const post = (tx.meta && tx.meta.postTokenBalances) || [];
   const pre = (tx.meta && tx.meta.preTokenBalances) || [];
   const need = BigInt(Math.round(Number(amountUsdc) * 1e6));
@@ -50,7 +67,7 @@ async function getTransaction(signature, rpcUrl, fetchImpl) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export async function verifyUsdcPayment({
-  signature, amountUsdc, merchant, rpcUrl, mint = USDC_MINT,
+  signature, amountUsdc, merchant, rpcUrl, mint = USDC_MINT, memo = null,
   fetchImpl = globalThis.fetch, retries = 10, delayMs = 3000,
 }) {
   if (!/^[1-9A-HJ-NP-Za-km-z]{64,120}$/.test(signature || "")) {
@@ -69,5 +86,5 @@ export async function verifyUsdcPayment({
     if (i < retries - 1) await sleep(delayMs);
   }
   if (!tx && lastErr) return { ok: false, reason: `RPC lookup failed: ${lastErr.message}` };
-  return verifyFromTx(tx, { amountUsdc, merchant, mint });
+  return verifyFromTx(tx, { amountUsdc, merchant, mint, memo });
 }
