@@ -1,13 +1,36 @@
-# Solana Watchdog: scan a Solana program repo, paid per call
+# Solana Watchdog: security checks for Solana code, paid per request
 
-You are an agent. This page tells you how to buy one security scan of a public
-Solana / Anchor GitHub repository, pay for it yourself in USDC, and read the
-report. No account, no API key, no email needed.
+You are an agent. This page tells you how to buy security checks of Solana /
+Anchor code, pay for them yourself in USDC on Solana, and read the result. No
+account, no API key, no email needed.
 
 Base URL: `{{BASE}}`
-Price: **{{PRICE}} USDC** per scan, Solana mainnet.
 
-## What you get
+| Request | Price | Answer |
+|---|---|---|
+| `POST /agent/check` | **{{CHECK_PRICE}} USDC** | instant: advisories for up to {{CHECK_MAX}} crates at exact versions |
+| `POST /agent/scan` | **{{PRICE}} USDC** | a job: full scan of a public GitHub repo, report in about a minute |
+
+Both are paid over x402 v2 and sit under the $1 per-payment cap x402 clients
+ship with.
+
+## Per-request check (`/agent/check`)
+
+Before adding or upgrading a crate, or to triage a `Cargo.lock` you already
+have: POST the pinned packages through your x402 client.
+
+```sh
+POST {{BASE}}/agent/check
+{"packages":[{"name":"borsh","version":"0.9.3"},{"name":"anchor-lang","version":"0.29.0"}]}
+```
+
+The paid answer is **HTTP 200**: `checked`, `advisories` (id, affected
+`crates`, `severity`, `summary`, `url`) and `notCheckedCount`. Your payment is
+verified first and settled only once the answer exists: if the lookup fails,
+you are not charged. It lists known advisories for those versions; it does not
+tell you whether your program reaches the vulnerable code.
+
+## Full scan (`/agent/scan`): what you get
 
 - Every RustSec / GHSA advisory that affects the **exact versions pinned** in the
   repo's `Cargo.lock`, split into three buckets: the on-chain surface (crates the
@@ -24,7 +47,7 @@ certify the absence of bugs. Say so when you pass the result on.
 ## Before you pay
 
 This costs real money. **Ask your human before you pay**, unless they have
-already told you that you may spend on scans. Never ask anyone for a private key
+given you a budget for these requests. Never ask anyone for a private key
 or seed phrase, and never send one anywhere: nothing here needs one.
 
 ## Fastest path: any x402 v2 client
@@ -36,10 +59,6 @@ through it. The 402 carries the requirements in the `PAYMENT-REQUIRED` header
 facilitator, which pays the network fee). Your client resends the request with
 `PAYMENT-SIGNATURE`; the paid answer is **HTTP 200** with `jobId`,
 `accessToken` (**shown once, save it**) and `statusUrl`. Then go to step 4.
-
-Most x402 clients cap one payment at a small amount by default (`@x402/fetch`:
-$1). This scan costs {{PRICE}} USDC, so raise the cap for this one call, and
-only with your human's approval.
 
 Without an x402 client, follow steps 1 to 4.
 

@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { normalize } from "./collect.mjs";
 
-const OSV_QUERY = "https://api.osv.dev/v1/query";
+const OSV_QUERY = process.env.OSV_QUERY_URL || "https://api.osv.dev/v1/query";
 
 // Only allow canonical public GitHub HTTPS URLs — no shell, no SSH, no arbitrary
 // hosts. Returns { owner, repo, url } or throws.
@@ -76,7 +76,7 @@ function findFiles(dir, predicate, skip = new Set(["target", "node_modules", ".g
 // Version-filtered OSV: which of the repo's pinned crates carry advisories that
 // actually affect the pinned version. Two-phase to keep request count sane: a
 // cheap per-crate query, then normalize the hits.
-async function scanDependencies(crates, fetchImpl, log) {
+export async function scanDependencies(crates, fetchImpl, log = () => {}) {
   // De-dupe (name@version) and cap to keep a scan quick and polite to OSV.
   const seen = new Set();
   const uniq = [];

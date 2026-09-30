@@ -26,6 +26,8 @@ POST /agent/scan {repo[,email]}       -> 402 + x402-style `accepts` (payTo, USDC
                                        amount, extra.memo), jobId, accessToken (shown once).
 POST /agent/scan {jobId, signature}   -> verifies the USDC transfer on-chain AND that the
                                        same tx carries the job's memo; 202 + queued.
+POST /agent/check {packages:[{name,version}]} -> x402 v2, instant advisories for up to 100
+                                       crates; verified first, settled only once the answer exists.
 GET  /agent/jobs/:id                  -> status (Bearer accessToken).
 GET  /agent/jobs/:id/report.{json,md,html} -> the report once done (Bearer accessToken).
 ```
@@ -71,7 +73,10 @@ Then point the landing page at it: set `window.SSW_ENDPOINT = "https://your-back
 | `PORT` | listen port (default 8787) |
 | `ADMIN_TOKEN` | bearer token for `/confirm` and `/admin/jobs` (required to confirm) |
 | `PAY_INSTRUCTIONS` | text shown to the buyer after `/scan` (USDC address / Stripe link) |
-| `SCAN_PRICE_USD` | price shown (default 80) |
+| `SCAN_PRICE_USD` | web price, a human with a branded report by email (default 80) |
+| `AGENT_SCAN_PRICE_USD` | agent price of `/agent/scan` (default 0.5) |
+| `CHECK_PRICE_USD` | price of one `/agent/check` request (default 0.01) |
+| `OSV_QUERY_URL` | advisory database endpoint (default OSV; tests point it at a fake) |
 | `RESEND_API_KEY` + `MAIL_FROM` | email delivery via Resend; omit for dev disk mode |
 | `ALLOW_ORIGIN` | CORS origin for the landing page (default `*`) |
 | `JOBS_FILE` | job store path (default `server/data/jobs.json`) |
