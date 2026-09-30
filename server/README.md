@@ -36,8 +36,16 @@ someone else's payment to their own job. The job id is in that public memo, so
 reading a report takes the separate access token, stored only as a hash. Agent
 reports are kept in `REPORTS_DIR` (default: `reports/` next to `JOBS_FILE`).
 
-The 402 body borrows the x402 field names so x402-aware agents can read it, but
-the proof is a confirmed transaction signature, not an x402 facilitator payload.
+**x402 v2.** The same 402 also carries a standard `PAYMENT-REQUIRED` header
+(Solana mainnet, USDC, `extra.memo` = the job's memo, `extra.feePayer` from the
+facilitator's `/supported`, and the `bazaar` discovery extension). A standard
+client resends the request with `PAYMENT-SIGNATURE` (a signed, unsent transfer);
+the server settles it through the facilitator (`FACILITATOR_URL`, PayAI by
+default, free tier, no key), always against requirements rebuilt from the job,
+never the client's echo, then re-checks the settled signature on-chain with the
+same memo check as above. The paid answer is `200` + `PAYMENT-RESPONSE` and a
+fresh `accessToken`. A facilitator settling a payment that echoes the `bazaar`
+extension is also what lists the endpoint in its discovery catalog.
 
 The `/confirm` gate is the single integration point for payment. Start by
 confirming crypto payments by hand (`Authorization: Bearer $ADMIN_TOKEN`); later
@@ -69,6 +77,9 @@ Then point the landing page at it: set `window.SSW_ENDPOINT = "https://your-back
 | `JOBS_FILE` | job store path (default `server/data/jobs.json`) |
 | `PUBLIC_BASE_URL` | absolute base used in agent-facing URLs and `/skill.md` |
 | `REPORTS_DIR` | where agent reports are kept (default `reports/` next to `JOBS_FILE`) |
+| `FACILITATOR_URL` | x402 v2 facilitator (default `https://facilitator.payai.network`; `off` keeps only the memo flow) |
+| `ERC8004_AGENT_ID` | agentId minted by the ERC-8004 IdentityRegistry on Base; listed in `/.well-known/agent-registration.json` |
+| `LANDING_URL` | the human landing, listed as the `web` service of the registration file |
 | `ALLOW_LOCAL` | `1` enables scanning a local path (dev/testing only — never in prod) |
 
 ## Confirm a payment (manual MVP)

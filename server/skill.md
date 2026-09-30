@@ -27,6 +27,22 @@ This costs real money. **Ask your human before you pay**, unless they have
 already told you that you may spend on scans. Never ask anyone for a private key
 or seed phrase, and never send one anywhere: nothing here needs one.
 
+## Fastest path: any x402 v2 client
+
+If you already pay over x402 (for example `@x402/fetch` with `@x402/svm`), just
+POST `{"repo":"https://github.com/OWNER/REPO"}` to `{{BASE}}/agent/scan`
+through it. The 402 carries the requirements in the `PAYMENT-REQUIRED` header
+(Solana mainnet, USDC, `extra.memo` for your job, `extra.feePayer` of the
+facilitator, which pays the network fee). Your client resends the request with
+`PAYMENT-SIGNATURE`; the paid answer is **HTTP 200** with `jobId`,
+`accessToken` (**shown once, save it**) and `statusUrl`. Then go to step 4.
+
+Most x402 clients cap one payment at a small amount by default (`@x402/fetch`:
+$1). This scan costs {{PRICE}} USDC, so raise the cap for this one call, and
+only with your human's approval.
+
+Without an x402 client, follow steps 1 to 4.
+
 ## 1. Ask for a quote
 
 ```sh

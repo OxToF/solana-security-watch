@@ -17,11 +17,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
-import { runScan, parseGithubUrl, fixMailto } from "../bin/scan.mjs";
+import { runScan, parseGithubUrl, fixMailto, WATCHDOG_LOGO } from "../bin/scan.mjs";
 import { Store } from "./store.mjs";
 import { Queue } from "./queue.mjs";
 import { sendReport } from "./email.mjs";
 import { verifyUsdcPayment, USDC_MINT } from "./verify.mjs";
+import { Facilitator, SOLANA_MAINNET, encodeHeader, decodeHeader, bazaarExtension } from "./x402.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -41,6 +42,13 @@ const JOBS_FILE = process.env.JOBS_FILE || join(__dirname, "data", "jobs.json");
 const REPORTS_DIR = process.env.REPORTS_DIR || join(dirname(JOBS_FILE), "reports");
 const CONTACT = process.env.SUPPORT_EMAIL || "solanawatchdog@proton.me";
 const PUBLIC_BASE = (process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
+// x402 v2 settlement. "off" leaves only the memo flow.
+const FACILITATOR_URL = process.env.FACILITATOR_URL || "https://facilitator.payai.network";
+const facilitator = FACILITATOR_URL === "off" ? null : new Facilitator({ url: FACILITATOR_URL });
+// ERC-8004 identity, once registered on Base: the agentId minted by register().
+const ERC8004_REGISTRY = "eip155:8453:0x8004A169FB4a3325136EB29fA0ceB6D2e539a432";
+const ERC8004_AGENT_ID = process.env.ERC8004_AGENT_ID ? Number(process.env.ERC8004_AGENT_ID) : null;
+const LANDING_URL = process.env.LANDING_URL || "https://watchdog.soladrome.finance";
 const store = new Store(JOBS_FILE);
 const queue = new Queue();
 
@@ -60,7 +68,8 @@ function send(res, code, body, extraHeaders = {}) {
     "content-type": typeof body === "string" ? "text/plain" : "application/json",
     "access-control-allow-origin": ALLOW_ORIGIN,
     "access-control-allow-methods": "POST, GET, OPTIONS",
-    "access-control-allow-headers": "content-type, authorization",
+    "access-control-allow-headers": "content-type, authorization, payment-signature",
+    "access-control-expose-headers": "payment-required, payment-response",
     ...extraHeaders,
   });
   res.end(payload);
@@ -190,9 +199,111 @@ function paymentRequired(job) {
     jobId: job.id,
     accessToken: job._accessToken,
     amountUsdc: job.priceUsd,
+    x402: facilitator
+      ? "Standard x402 v2 clients: the requirements are in the PAYMENT-REQUIRED header. Resend this same request with a PAYMENT-SIGNATURE header; the facilitator pays the network fee. The access token then comes back in the paid response."
+      : undefined,
     howToPay: `Send ${job.priceUsd} USDC (SPL, mint ${USDC_MINT}) on Solana mainnet to ${MERCHANT_WALLET}, in a transaction that also carries an SPL Memo instruction with the exact text "${job.memo}". Then POST ${PUBLIC_BASE}/agent/scan with {"jobId":"${job.id}","signature":"<tx signature>"}. Keep accessToken: it is shown once and is the only way to read the report.`,
     manual: `${PUBLIC_BASE}/skill.md`,
   };
+}
+
+// The same price as x402 v2 PaymentRequirements. Always rebuilt from the job on
+// our side: the copy a client echoes back in `accepted` is never what we settle
+// against, so a client cannot talk the amount or the recipient down.
+function requirementsFor(job, feePayer) {
+  return {
+    scheme: "exact",
+    network: SOLANA_MAINNET,
+    amount: String(Math.round(job.priceUsd * 1e6)),
+    asset: USDC_MINT,
+    payTo: MERCHANT_WALLET,
+    maxTimeoutSeconds: 120,
+    // The facilitator refuses a transaction whose Memo is not exactly this, so
+    // the job binding of the memo flow carries over unchanged.
+    extra: { feePayer, memo: job.memo },
+  };
+}
+
+function x402Required(job, feePayer, error) {
+  return {
+    x402Version: 2,
+    error,
+    resource: {
+      url: `${PUBLIC_BASE}/agent/scan`,
+      description: "Solana Watchdog: dependency advisories split by on-chain vs toolchain surface, plus known Solana/Anchor bug-class leads, for a public GitHub repo. A scan, not an audit.",
+      mimeType: "application/json",
+      serviceName: "Solana Watchdog",
+      tags: ["security", "solana", "anchor", "dependencies", "code-scan"],
+    },
+    accepts: [requirementsFor(job, feePayer)],
+    extensions: { bazaar: bazaarExtension({ exampleRepo: "https://github.com/solana-developers/program-examples", base: PUBLIC_BASE }) },
+  };
+}
+
+// A facilitator outage must not take the memo flow down with it: no header then.
+async function quoteHeaders(job, error = "PAYMENT-SIGNATURE header is required") {
+  if (!facilitator) return {};
+  try { return { "payment-required": encodeHeader(x402Required(job, await facilitator.feePayer(SOLANA_MAINNET), error)) }; }
+  catch (e) { console.error(`[x402] quote without header: ${e.message}`); return {}; }
+}
+
+// Settle a PAYMENT-SIGNATURE for the job its memo names. The job is moved to
+// "settling" before the first await, so two copies of one payload racing each
+// other cannot both reach /settle (the duplicate-settlement case of the spec).
+async function settleX402(res, payload) {
+  const accepted = payload && payload.accepted;
+  const job = accepted && accepted.extra && store.findByMemo(accepted.extra.memo);
+  if (!job || !job.agent) return send(res, 402, { error: "payment does not match an open quote: POST /agent/scan {repo} for a new one" });
+  if (job.status !== "pending_payment")
+    return send(res, 409, { error: `job already ${job.status}`, jobId: job.id });
+  const feePayer = await facilitator.feePayer(SOLANA_MAINNET);
+  const reqs = requirementsFor(job, feePayer);
+  store.update(job.id, { status: "settling" });
+  const reopen = async (code, error, extra = {}) => {
+    store.update(job.id, { status: "pending_payment" });
+    return send(res, code, { error, jobId: job.id }, { ...(await quoteHeaders(job, error)), ...extra });
+  };
+
+  let v;
+  try { v = await facilitator.verify(payload, reqs); }
+  catch (e) { return reopen(502, `facilitator unreachable: ${e.message}`); }
+  if (!v.isValid) return reopen(402, `payment not valid: ${v.invalidReason || "rejected by facilitator"}`);
+
+  let s;
+  try { s = await facilitator.settle(payload, reqs); }
+  catch (e) {
+    // Unknown outcome: the transfer may have landed. Do not reopen the quote
+    // (a retry could pay twice); support can settle it from the admin list.
+    store.update(job.id, { status: "settle_unknown", error: String(e.message).slice(0, 300) });
+    return send(res, 502, { error: "settlement outcome unknown, do not pay again", jobId: job.id, contact: CONTACT });
+  }
+  if (!s.success || !s.transaction) {
+    return reopen(402, `settlement failed: ${s.errorReason || "unknown"}`, { "payment-response": encodeHeader(s) });
+  }
+
+  // Trust the chain, not the facilitator's word: the same check as the memo flow.
+  const chain = await verifyUsdcPayment({
+    signature: s.transaction, amountUsdc: job.priceUsd, merchant: MERCHANT_WALLET, rpcUrl: SOLANA_RPC_URL, memo: job.memo,
+  });
+  if (!chain.ok || store.findBySignature(s.transaction)) {
+    store.update(job.id, { status: "settle_unknown", paymentSignature: s.transaction, error: `facilitator settled but chain check failed: ${chain.reason || "signature reused"}` });
+    return send(res, 502, { error: "payment reported settled but not confirmed on-chain yet, do not pay again", jobId: job.id, transaction: s.transaction, contact: CONTACT });
+  }
+
+  // The quote's token went to whoever asked; a standard x402 client never reads
+  // a 402 body, so the paid response carries a fresh one and it replaces the old.
+  const accessToken = randomBytes(24).toString("base64url");
+  store.update(job.id, {
+    status: "paid", paidAt: new Date().toISOString(), paymentSignature: s.transaction,
+    payer: s.payer || null, via: "x402", accessTokenHash: hashToken(accessToken),
+  });
+  queue.enqueue(() => runJob(job.id));
+  return send(res, 200, {
+    jobId: job.id, status: "paid", repo: job.repo, accessToken,
+    statusUrl: `${PUBLIC_BASE}/agent/jobs/${job.id}`,
+    poll: "GET statusUrl with Authorization: Bearer <accessToken> every 15s; a scan takes about a minute. accessToken is shown once.",
+    transaction: s.transaction,
+  }, { "payment-response": encodeHeader(s) });
 }
 
 function agentJobView(job) {
@@ -207,6 +318,26 @@ function agentJobView(job) {
     view.report = { json: `${base}.json`, markdown: `${base}.md`, html: `${base}.html` };
   }
   return view;
+}
+
+// The ERC-8004 registration file: the agentURI the on-chain identity points to.
+// Served from the API's own domain, it also proves control of that endpoint.
+function agentRegistration() {
+  return {
+    type: "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
+    name: "Solana Watchdog",
+    description: "Security scan of a public Solana / Anchor GitHub repo: RustSec advisories on the exact pinned versions, split into the on-chain surface and CLI tooling, build hygiene, and leads for known Solana bug classes with file:line. JSON + Markdown + HTML report. Agents pay per call over x402 (USDC on Solana). A scan, not an audit.",
+    image: `${PUBLIC_BASE}/logo.svg`,
+    services: [
+      { name: "web", endpoint: LANDING_URL },
+      { name: "x402", endpoint: `${PUBLIC_BASE}/agent/scan` },
+      { name: "agent-manual", endpoint: `${PUBLIC_BASE}/skill.md` },
+    ],
+    x402Support: true,
+    active: true,
+    registrations: ERC8004_AGENT_ID === null ? [] : [{ agentId: ERC8004_AGENT_ID, agentRegistry: ERC8004_REGISTRY }],
+    supportedTrust: ["reputation"],
+  };
 }
 
 const SKILL_MD = existsSync(join(__dirname, "skill.md")) ? readFileSync(join(__dirname, "skill.md"), "utf8") : "";
@@ -235,6 +366,13 @@ const server = createServer(async (req, res) => {
       return send(res, 200, readFileSync(f, "utf8"), { "content-type": "text/html; charset=utf-8", "x-robots-tag": "noindex, nofollow", "referrer-policy": "no-referrer", "cache-control": "private, no-store" });
     }
 
+    if (req.method === "GET" && url.pathname === "/.well-known/agent-registration.json") {
+      return send(res, 200, agentRegistration(), { "cache-control": "public, max-age=300" });
+    }
+    if (req.method === "GET" && url.pathname === "/logo.svg") {
+      return send(res, 200, WATCHDOG_LOGO.replace('width="46" height="46" ', ""), { "content-type": "image/svg+xml", "cache-control": "public, max-age=86400" });
+    }
+
     if (req.method === "GET" && (url.pathname === "/skill.md" || url.pathname === "/agent")) {
       return send(res, 200, SKILL_MD
         .replaceAll("{{BASE}}", PUBLIC_BASE)
@@ -246,6 +384,18 @@ const server = createServer(async (req, res) => {
       if (!MERCHANT_WALLET) return send(res, 503, { error: "payments not configured" });
       if (rateLimited(ip)) return send(res, 429, { error: "rate limited" });
       const body = await readBody(req);
+
+      // x402 v2: the same request resent with the signed, unsent transfer.
+      if (req.headers["payment-signature"]) {
+        if (!facilitator) return send(res, 400, { error: "x402 settlement is off here; use the memo flow in /skill.md" });
+        const payload = decodeHeader(req.headers["payment-signature"]);
+        if (!payload || payload.x402Version !== 2 || !payload.payload || !payload.accepted)
+          return send(res, 400, { error: "PAYMENT-SIGNATURE is not a base64 x402 v2 PaymentPayload" });
+        return settleX402(res, payload);
+      }
+      // Nothing is settled from a v1 header: say so rather than quote again.
+      if (req.headers["x-payment"])
+        return send(res, 400, { error: "x402 v1 X-PAYMENT is not accepted: use x402 v2 (PAYMENT-SIGNATURE, requirements in the PAYMENT-REQUIRED header) or the memo flow in /skill.md" });
 
       // Step 2: prove payment for a job created in step 1.
       if (body.jobId || body.signature) {
@@ -285,7 +435,7 @@ const server = createServer(async (req, res) => {
         memo: `ssw:${randomBytes(9).toString("base64url")}`,
         accessTokenHash: hashToken(accessToken),
       });
-      return send(res, 402, paymentRequired({ ...job, _accessToken: accessToken }));
+      return send(res, 402, paymentRequired({ ...job, _accessToken: accessToken }), await quoteHeaders(job));
     }
 
     if (req.method === "GET" && url.pathname.startsWith("/agent/jobs/")) {
