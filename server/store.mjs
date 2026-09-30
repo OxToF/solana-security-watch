@@ -37,4 +37,8 @@ export class Store {
   findBySignature(sig) {
     return Object.values(this.jobs).find((j) => j.paymentSignature === sig) || null;
   }
+  findByMemo(memo) {
+    if (!memo) return null;
+    return Object.values(this.jobs).find((j) => j.memo === memo) || null;
+  }
 }
