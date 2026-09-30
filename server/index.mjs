@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
-import { runScan, parseGithubUrl, fixMailto } from "../bin/scan.mjs";
+import { runScan, parseGithubUrl, fixMailto, WATCHDOG_LOGO } from "../bin/scan.mjs";
 import { Store } from "./store.mjs";
 import { Queue } from "./queue.mjs";
 import { sendReport } from "./email.mjs";
@@ -45,6 +45,10 @@ const PUBLIC_BASE = (process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).
 // x402 v2 settlement. "off" leaves only the memo flow.
 const FACILITATOR_URL = process.env.FACILITATOR_URL || "https://facilitator.payai.network";
 const facilitator = FACILITATOR_URL === "off" ? null : new Facilitator({ url: FACILITATOR_URL });
+// ERC-8004 identity, once registered on Base: the agentId minted by register().
+const ERC8004_REGISTRY = "eip155:8453:0x8004A169FB4a3325136EB29fA0ceB6D2e539a432";
+const ERC8004_AGENT_ID = process.env.ERC8004_AGENT_ID ? Number(process.env.ERC8004_AGENT_ID) : null;
+const LANDING_URL = process.env.LANDING_URL || "https://watchdog.soladrome.finance";
 const store = new Store(JOBS_FILE);
 const queue = new Queue();
 
@@ -316,6 +320,26 @@ function agentJobView(job) {
   return view;
 }
 
+// The ERC-8004 registration file: the agentURI the on-chain identity points to.
+// Served from the API's own domain, it also proves control of that endpoint.
+function agentRegistration() {
+  return {
+    type: "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
+    name: "Solana Watchdog",
+    description: "Security scan of a public Solana / Anchor GitHub repo: RustSec advisories on the exact pinned versions, split into the on-chain surface and CLI tooling, build hygiene, and leads for known Solana bug classes with file:line. JSON + Markdown + HTML report. Agents pay per call over x402 (USDC on Solana). A scan, not an audit.",
+    image: `${PUBLIC_BASE}/logo.svg`,
+    services: [
+      { name: "web", endpoint: LANDING_URL },
+      { name: "x402", endpoint: `${PUBLIC_BASE}/agent/scan` },
+      { name: "agent-manual", endpoint: `${PUBLIC_BASE}/skill.md` },
+    ],
+    x402Support: true,
+    active: true,
+    registrations: ERC8004_AGENT_ID === null ? [] : [{ agentId: ERC8004_AGENT_ID, agentRegistry: ERC8004_REGISTRY }],
+    supportedTrust: ["reputation"],
+  };
+}
+
 const SKILL_MD = existsSync(join(__dirname, "skill.md")) ? readFileSync(join(__dirname, "skill.md"), "utf8") : "";
 
 // Provider RPC URLs carry their API key (Helius: ?api-key=): log the host only.
@@ -340,6 +364,13 @@ const server = createServer(async (req, res) => {
       const f = ok && join(REPORTS_DIR, `${job.id}.html`);
       if (!ok || !existsSync(f)) return send(res, 404, "Report not found. Check the link in your email.");
       return send(res, 200, readFileSync(f, "utf8"), { "content-type": "text/html; charset=utf-8", "x-robots-tag": "noindex, nofollow", "referrer-policy": "no-referrer", "cache-control": "private, no-store" });
+    }
+
+    if (req.method === "GET" && url.pathname === "/.well-known/agent-registration.json") {
+      return send(res, 200, agentRegistration(), { "cache-control": "public, max-age=300" });
+    }
+    if (req.method === "GET" && url.pathname === "/logo.svg") {
+      return send(res, 200, WATCHDOG_LOGO.replace('width="46" height="46" ', ""), { "content-type": "image/svg+xml", "cache-control": "public, max-age=86400" });
     }
 
     if (req.method === "GET" && (url.pathname === "/skill.md" || url.pathname === "/agent")) {

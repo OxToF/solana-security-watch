@@ -78,6 +78,8 @@ Then point the landing page at it: set `window.SSW_ENDPOINT = "https://your-back
 | `PUBLIC_BASE_URL` | absolute base used in agent-facing URLs and `/skill.md` |
 | `REPORTS_DIR` | where agent reports are kept (default `reports/` next to `JOBS_FILE`) |
 | `FACILITATOR_URL` | x402 v2 facilitator (default `https://facilitator.payai.network`; `off` keeps only the memo flow) |
+| `ERC8004_AGENT_ID` | agentId minted by the ERC-8004 IdentityRegistry on Base; listed in `/.well-known/agent-registration.json` |
+| `LANDING_URL` | the human landing, listed as the `web` service of the registration file |
 | `ALLOW_LOCAL` | `1` enables scanning a local path (dev/testing only — never in prod) |
 
 ## Confirm a payment (manual MVP)

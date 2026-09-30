@@ -230,3 +230,14 @@ test("x402 v2: quote header, settle through the facilitator, token in the paid r
   const v1 = await fetch(`${base}/agent/scan`, { method: "POST", headers: { "x-payment": "e30=" }, body: JSON.stringify({ repo }) });
   assert.equal(v1.status, 400);
 });
+
+test("ERC-8004 registration file: x402 service, own domain, no registration before one exists", async () => {
+  const reg = await (await fetch(`${base}/.well-known/agent-registration.json`)).json();
+  assert.equal(reg.type, "https://eips.ethereum.org/EIPS/eip-8004#registration-v1");
+  assert.equal(reg.x402Support, true);
+  assert.ok(reg.services.some((s) => s.name === "x402" && s.endpoint === `${base}/agent/scan`));
+  assert.deepEqual(reg.registrations, []);
+  const logo = await fetch(reg.image);
+  assert.equal(logo.status, 200);
+  assert.match(logo.headers.get("content-type"), /image\/svg\+xml/);
+});
