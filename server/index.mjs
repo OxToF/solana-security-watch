@@ -271,7 +271,7 @@ function x402Required(job, feePayer, error) {
     error,
     resource: {
       url: `${PUBLIC_BASE}/agent/scan`,
-      description: "Solana Watchdog: dependency advisories split by on-chain vs toolchain surface, plus known Solana/Anchor bug-class leads, for a public GitHub repo. A scan, not an audit.",
+      description: "Use this before releasing or integrating a Solana/Anchor program from a public GitHub repo: advisories on its exact pinned crates, split into what ships on-chain and what is tooling, build hygiene, and leads for known Solana bug classes with file:line. A scan, not an audit.",
       mimeType: "application/json",
       serviceName: "Solana Watchdog",
       tags: ["security", "solana", "anchor", "dependencies", "code-scan"],
@@ -416,7 +416,7 @@ function checkRequired(feePayer, error = "PAYMENT-SIGNATURE header is required")
     error,
     resource: {
       url: `${PUBLIC_BASE}/agent/check`,
-      description: `Solana Watchdog advisory check: RustSec/OSV advisories affecting the crates of a whole Cargo.lock (or up to ${CHECK_MAX_PACKAGES} listed crates) at their exact pinned versions. Instant, per request.`,
+      description: `Use this before adding or upgrading a Rust crate, or to triage a Cargo.lock: RustSec/OSV advisories affecting a whole Cargo.lock (or up to ${CHECK_MAX_PACKAGES} listed crates) at their exact pinned versions. Instant, per request.`,
       mimeType: "application/json",
       serviceName: "Solana Watchdog check",
       tags: ["security", "solana", "rust", "advisories", "dependencies"],
