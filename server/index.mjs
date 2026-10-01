@@ -23,6 +23,7 @@ import { Queue } from "./queue.mjs";
 import { sendReport } from "./email.mjs";
 import { verifyUsdcPayment, USDC_MINT } from "./verify.mjs";
 import { Facilitator, SOLANA_MAINNET, encodeHeader, decodeHeader, bazaarExtension } from "./x402.mjs";
+import { PayAIAuth } from "./payai-auth.mjs";
 import { inspectProgram, isPubkey } from "./program.mjs";
 import { Watcher, checkWebhookUrl, newSecret, programSnapshot, diffProgram, lockfileSnapshot, diffLockfile } from "./watch.mjs";
 
@@ -62,7 +63,10 @@ const CONTACT = process.env.SUPPORT_EMAIL || "solanawatchdog@proton.me";
 const PUBLIC_BASE = (process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
 // x402 v2 settlement. "off" leaves only the memo flow.
 const FACILITATOR_URL = process.env.FACILITATOR_URL || "https://facilitator.payai.network";
-const facilitator = FACILITATOR_URL === "off" ? null : new Facilitator({ url: FACILITATOR_URL });
+// Throws at boot when the key is half-set or malformed: PayAI refuses a bad key on
+// every payment instead of falling back to the free lane.
+const payaiAuth = PayAIAuth.fromEnv();
+const facilitator = FACILITATOR_URL === "off" ? null : new Facilitator({ url: FACILITATOR_URL, auth: payaiAuth });
 // ERC-8004 identity, once registered on Base: the agentId minted by register().
 const ERC8004_REGISTRY = "eip155:8453:0x8004A169FB4a3325136EB29fA0ceB6D2e539a432";
 const ERC8004_AGENT_ID = process.env.ERC8004_AGENT_ID ? Number(process.env.ERC8004_AGENT_ID) : null;
@@ -946,6 +950,7 @@ const server = createServer(async (req, res) => {
 
 watcher.start();
 server.listen(PORT, () => {
+  console.log(`[server] facilitator lane: ${payaiAuth ? `PayAI ${payaiAuth.label()}` : "public (no key)"}`);
   console.log(`[server] solana-security-watch scan backend on :${PORT}`);
   console.log(`[server] admin ${ADMIN_TOKEN ? "enabled" : "DISABLED (set ADMIN_TOKEN)"} · email ${process.env.RESEND_API_KEY ? "Resend" : "DEV mode (disk)"} · price ${PRICE_USD} USDC web · agents ${AGENT_SCAN_PRICE_USD} scan / ${CHECK_PRICE_USD} check`);
   console.log(`[server] payments ${MERCHANT_WALLET ? "on -> " + MERCHANT_WALLET : "OFF (set MERCHANT_WALLET to enable /pay/verify)"} · rpc ${rpcHost(SOLANA_RPC_URL)}`);

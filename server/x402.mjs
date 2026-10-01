@@ -1,4 +1,5 @@
-// x402 v2 over HTTP, settled by a facilitator (PayAI by default: free tier, no key).
+// x402 v2 over HTTP, settled by a facilitator (PayAI by default: free tier without
+// a key, paid lane with PAYAI_API_KEY_ID / PAYAI_API_KEY_SECRET, see payai-auth.mjs).
 //
 // Why a facilitator when verify.mjs can already read a payment off the chain:
 // a standard x402 client (the fetch wrappers agents use) does not submit a
@@ -19,9 +20,10 @@ export function decodeHeader(value) {
 }
 
 export class Facilitator {
-  constructor({ url, fetchImpl = globalThis.fetch, ttlMs = 10 * 60_000 }) {
+  constructor({ url, fetchImpl = globalThis.fetch, ttlMs = 10 * 60_000, auth = null }) {
     this.url = url.replace(/\/$/, "");
     this.fetch = fetchImpl;
+    this.auth = auth; // PayAIAuth or null (public shared lane)
     this.ttlMs = ttlMs;
     this._supported = null;
     this._at = 0;
@@ -30,7 +32,7 @@ export class Facilitator {
   async _post(path, body) {
     const res = await this.fetch(`${this.url}${path}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...(this.auth ? this.auth.headers() : {}) },
       body: JSON.stringify(body),
     });
     const text = await res.text();
@@ -44,7 +46,8 @@ export class Facilitator {
   // transaction around it, so it goes into `extra.feePayer` of every quote.
   async feePayer(network) {
     if (!this._supported || Date.now() - this._at > this.ttlMs) {
-      const res = await this.fetch(`${this.url}/supported`);
+      // With a key, the account may have its own fee payer: ask as that account.
+      const res = await this.fetch(`${this.url}/supported`, { headers: this.auth ? this.auth.headers() : {} });
       if (!res.ok) throw new Error(`facilitator /supported ${res.status}`);
       this._supported = await res.json();
       this._at = Date.now();
