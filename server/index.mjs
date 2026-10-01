@@ -24,6 +24,7 @@ import { sendReport } from "./email.mjs";
 import { verifyUsdcPayment, USDC_MINT } from "./verify.mjs";
 import { Facilitator, SOLANA_MAINNET, encodeHeader, decodeHeader, bazaarExtension } from "./x402.mjs";
 import { inspectProgram, isPubkey } from "./program.mjs";
+import { Watcher, checkWebhookUrl, newSecret, programSnapshot, diffProgram, lockfileSnapshot, diffLockfile } from "./watch.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -35,6 +36,12 @@ const AGENT_SCAN_PRICE_USD = Number(process.env.AGENT_SCAN_PRICE_USD || 0.5);
 const CHECK_PRICE_USD = Number(process.env.CHECK_PRICE_USD || 0.01);
 const CHECK_MAX_PACKAGES = 100;
 const PROGRAM_PRICE_USD = Number(process.env.PROGRAM_PRICE_USD || 0.05);
+// A watch is bought once for a fixed period, under the $1 default cap of x402 clients.
+const WATCH_PRICE_USD = Number(process.env.WATCH_PRICE_USD || 0.9);
+const WATCH_DAYS = Number(process.env.WATCH_DAYS || 30);
+const WATCH_INTERVAL_MS = Number(process.env.WATCH_INTERVAL_MS || 60 * 60 * 1000);
+const WATCH_TICK_MS = Number(process.env.WATCH_TICK_MS || 60 * 1000);
+const WATCH_ALLOW_PRIVATE = process.env.WATCH_ALLOW_PRIVATE_WEBHOOKS === "1"; // tests only
 // A whole Cargo.lock instead of a list: one OSV batch call, so the size barely costs us.
 const LOCKFILE_MAX_BYTES = 2_000_000;
 const LOCKFILE_MAX_PACKAGES = 5000;
@@ -61,6 +68,7 @@ const ERC8004_REGISTRY = "eip155:8453:0x8004A169FB4a3325136EB29fA0ceB6D2e539a432
 const ERC8004_AGENT_ID = process.env.ERC8004_AGENT_ID ? Number(process.env.ERC8004_AGENT_ID) : null;
 const LANDING_URL = process.env.LANDING_URL || "https://watchdog.soladrome.finance";
 const store = new Store(JOBS_FILE);
+const watches = new Store(process.env.WATCHES_FILE || join(dirname(JOBS_FILE), "watches.json"));
 const queue = new Queue();
 
 // --- tiny per-IP rate limit (protects the create endpoint) ---
@@ -78,7 +86,7 @@ function send(res, code, body, extraHeaders = {}) {
   res.writeHead(code, {
     "content-type": typeof body === "string" ? "text/plain" : "application/json",
     "access-control-allow-origin": ALLOW_ORIGIN,
-    "access-control-allow-methods": "POST, GET, OPTIONS",
+    "access-control-allow-methods": "POST, GET, DELETE, OPTIONS",
     "access-control-allow-headers": "content-type, authorization, payment-signature",
     "access-control-expose-headers": "payment-required, payment-response",
     ...extraHeaders,
@@ -453,7 +461,9 @@ async function paidRequest(req, res, { feePayer, requirements, required, priceUs
       kind, agent: true, status: "done", payloadHash: key, paymentSignature: s.transaction, payer: s.payer || null,
       priceUsd, via: "x402", ...answer.record, paidAt: new Date().toISOString(),
     });
-    return send(res, 200, { ...answer.body, transaction: s.transaction }, { "payment-response": encodeHeader(s) });
+    // Anything that must exist only once paid (a watch) is created here, after settlement.
+    const extra = answer.commit ? answer.commit(s) : {};
+    return send(res, 200, { ...answer.body, ...extra, transaction: s.transaction }, { "payment-response": encodeHeader(s) });
   } finally {
     checking.delete(key);
   }
@@ -551,6 +561,120 @@ async function handleProgram(req, res, body) {
   });
 }
 
+// --- paid watches ------------------------------------------------------------------------
+// One payment buys WATCH_DAYS of hourly re-checks of a program or a lockfile; a change that
+// matters is POSTed to the agent's webhook, signed with a secret shown once.
+
+const WATCH_BAZAAR = bazaarExtension({
+  exampleBody: { programId: "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc", webhook: "https://agent.example/hooks/watchdog" },
+  properties: {
+    programId: { type: "string", description: "Watch a deployed program: authority, multisig rules, code upgrades, verified build. Send this OR lockfile." },
+    lockfile: { type: "string", description: "Watch a Cargo.lock: any new RustSec/OSV advisory affecting its pinned crates. Send this OR programId." },
+    webhook: { type: "string", description: "https URL that receives a signed POST on every change (header x-watchdog-signature: sha256=HMAC(secret, body))." },
+  },
+  required: ["webhook"],
+  outputExample: { watchId: "…", secret: "shown once", accessToken: "shown once", expiresAt: "…", baseline: { authority: { kind: "squads-v4", threshold: 5, members: 13 } } },
+});
+
+const watchRequirements = (feePayer) => ({ ...checkRequirements(feePayer), amount: String(Math.round(WATCH_PRICE_USD * 1e6)) });
+
+function watchRequired(feePayer, error = "PAYMENT-SIGNATURE header is required") {
+  return {
+    x402Version: 2,
+    error,
+    resource: {
+      url: `${PUBLIC_BASE}/agent/watch`,
+      description: `Use this to be told when a Solana program you rely on changes hands or code, or when a new advisory hits your Cargo.lock: ${WATCH_DAYS} days of hourly checks, signed webhook on each change. One payment.`,
+      mimeType: "application/json",
+      serviceName: "Solana Watchdog watch",
+      tags: ["security", "solana", "monitoring", "webhook", "upgrade-authority", "advisories"],
+    },
+    accepts: [watchRequirements(feePayer)],
+    extensions: { bazaar: WATCH_BAZAAR },
+  };
+}
+
+// Re-read a watch's target: { snapshot, events }. Throws when the answer is not
+// trustworthy (RPC down, advisory database down), which is never read as "no change".
+async function checkWatch(w) {
+  if (w.target === "program") {
+    const r = await inspectProgram(w.programId, { rpc: programRpc });
+    const snapshot = programSnapshot(r);
+    return { snapshot, events: diffProgram(w.snapshot, snapshot) };
+  }
+  const deps = await scanDependenciesBatch(w.packages, globalThis.fetch);
+  if (deps.failures) throw new Error(`advisory database did not answer for ${deps.failures} packages`);
+  return { snapshot: lockfileSnapshot(deps.advisories), events: diffLockfile(w.snapshot, lockfileSnapshot(deps.advisories), deps.advisories) };
+}
+
+async function handleWatch(req, res, body) {
+  if (!body || typeof body.webhook !== "string") return send(res, 400, { error: "webhook (an https URL) is required" });
+  let target;
+  if (body.programId !== undefined) {
+    if (body.lockfile !== undefined) return send(res, 400, { error: "send programId OR lockfile, not both" });
+    if (!isPubkey(body.programId)) return send(res, 400, { error: "programId must be a base58 Solana address" });
+    target = { target: "program", programId: body.programId, targetSummary: { type: "program", programId: body.programId } };
+  } else {
+    let parsed;
+    try { parsed = parseCheckInput({ lockfile: body.lockfile }); } catch (e) { return send(res, 400, { error: e.message }); }
+    target = { target: "lockfile", packages: parsed.packages, targetSummary: { type: "Cargo.lock", packages: parsed.packages.length } };
+  }
+  try { await checkWebhookUrl(body.webhook, { allowPrivate: WATCH_ALLOW_PRIVATE }); }
+  catch (e) { return send(res, 400, { error: e.message }); }
+  return paidRequest(req, res, {
+    feePayer: await facilitator.feePayer(SOLANA_MAINNET),
+    requirements: watchRequirements, required: watchRequired, priceUsd: WATCH_PRICE_USD, kind: "watch",
+    compute: async () => {
+      // The baseline is taken now, so the first webhook means "changed since you subscribed".
+      let baseline, detail;
+      try {
+        if (target.target === "program") {
+          const r = await inspectProgram(target.programId, { rpc: programRpc });
+          if (!r.exists || !r.executable) return { status: r.exists ? 422 : 404, error: `${r.flags[0].text} Nothing charged.` };
+          baseline = programSnapshot(r); detail = { authority: r.authority, lastDeploy: r.lastDeploy, flags: r.flags };
+        } else {
+          const deps = await scanDependenciesBatch(target.packages, globalThis.fetch);
+          if (deps.failures === target.packages.length) return { status: 502, error: "advisory database unreachable, nothing charged; try again" };
+          baseline = lockfileSnapshot(deps.advisories); detail = { advisories: deps.advisories, notCheckedCount: deps.failures };
+        }
+      } catch (e) { return { status: 502, error: `lookup failed, nothing charged: ${String(e.message).slice(0, 200)}` }; }
+      return {
+        record: { watchTarget: target.targetSummary },
+        body: { baseline: detail, checksEveryMinutes: Math.round(WATCH_INTERVAL_MS / 60000) },
+        commit: () => {
+          const secret = newSecret(), accessToken = randomBytes(24).toString("base64url");
+          const now = new Date();
+          const w = watches.create({
+            ...target, status: "active", webhook: body.webhook, secret, accessTokenHash: hashToken(accessToken),
+            snapshot: baseline, events: [], lastCheckedAt: now.toISOString(),
+            expiresAt: new Date(now.getTime() + WATCH_DAYS * 864e5).toISOString(),
+          });
+          return {
+            watchId: w.id, expiresAt: w.expiresAt,
+            secret, // HMAC key for x-watchdog-signature: shown once
+            accessToken, // for GET / DELETE on statusUrl: shown once
+            statusUrl: `${PUBLIC_BASE}/agent/watch/${w.id}`,
+            signature: "x-watchdog-signature: sha256=hex(HMAC-SHA256(secret, raw request body))",
+          };
+        },
+      };
+    },
+  });
+}
+
+function watchView(w) {
+  return {
+    watchId: w.id, status: w.status, target: w.targetSummary, webhook: w.webhook,
+    createdAt: w.createdAt, expiresAt: w.expiresAt, lastCheckedAt: w.lastCheckedAt || null,
+    lastError: w.lastError || null, events: w.events || [],
+  };
+}
+
+const watcher = new Watcher({
+  store: watches, check: checkWatch, allowPrivate: WATCH_ALLOW_PRIVATE,
+  intervalMs: WATCH_INTERVAL_MS, tickMs: WATCH_TICK_MS, log: (m) => console.log(m),
+});
+
 function agentJobView(job) {
   const view = {
     jobId: job.id, status: job.status, repo: job.repo, amountUsdc: job.priceUsd,
@@ -578,6 +702,7 @@ function agentRegistration() {
       { name: "x402", endpoint: `${PUBLIC_BASE}/agent/scan` },
       { name: "x402", endpoint: `${PUBLIC_BASE}/agent/program` },
       { name: "x402", endpoint: `${PUBLIC_BASE}/agent/check` },
+      { name: "x402", endpoint: `${PUBLIC_BASE}/agent/watch` },
       { name: "agent-manual", endpoint: `${PUBLIC_BASE}/skill.md` },
     ],
     x402Support: true,
@@ -626,6 +751,8 @@ const server = createServer(async (req, res) => {
         .replaceAll("{{PRICE}}", String(AGENT_SCAN_PRICE_USD))
         .replaceAll("{{CHECK_PRICE}}", String(CHECK_PRICE_USD))
         .replaceAll("{{PROGRAM_PRICE}}", String(PROGRAM_PRICE_USD))
+        .replaceAll("{{WATCH_PRICE}}", String(WATCH_PRICE_USD))
+        .replaceAll("{{WATCH_DAYS}}", String(WATCH_DAYS))
         .replaceAll("{{CHECK_MAX}}", String(CHECK_MAX_PACKAGES))
         .replaceAll("{{MERCHANT}}", MERCHANT_WALLET || "(not configured)"), { "content-type": "text/markdown; charset=utf-8" });
     }
@@ -702,6 +829,22 @@ const server = createServer(async (req, res) => {
       let body;
       try { body = await readBody(req); } catch { return send(res, 400, { error: "bad json" }); }
       return handleProgram(req, res, body);
+    }
+
+    if (req.method === "POST" && url.pathname === "/agent/watch") {
+      if (!MERCHANT_WALLET || !facilitator) return send(res, 503, { error: "payments not configured" });
+      if (rateLimited(ip, 60)) return send(res, 429, { error: "rate limited" });
+      let body;
+      try { body = await readBody(req, LOCKFILE_MAX_BYTES + 1e4); } catch { return send(res, 400, { error: "bad json" }); }
+      return handleWatch(req, res, body);
+    }
+
+    if ((req.method === "GET" || req.method === "DELETE") && url.pathname.startsWith("/agent/watch/")) {
+      const m = /^\/agent\/watch\/([0-9a-f-]{36})$/.exec(url.pathname);
+      const w = m && watches.get(m[1]);
+      if (!w || !agentAuthorized(req, w)) return send(res, 404, { error: "unknown watchId or wrong access token" });
+      if (req.method === "DELETE") return send(res, 200, watchView(watches.update(w.id, { status: "cancelled" })));
+      return send(res, 200, watchView(w));
     }
 
     if (req.method === "GET" && url.pathname.startsWith("/agent/jobs/")) {
@@ -801,6 +944,7 @@ const server = createServer(async (req, res) => {
   }
 });
 
+watcher.start();
 server.listen(PORT, () => {
   console.log(`[server] solana-security-watch scan backend on :${PORT}`);
   console.log(`[server] admin ${ADMIN_TOKEN ? "enabled" : "DISABLED (set ADMIN_TOKEN)"} · email ${process.env.RESEND_API_KEY ? "Resend" : "DEV mode (disk)"} · price ${PRICE_USD} USDC web · agents ${AGENT_SCAN_PRICE_USD} scan / ${CHECK_PRICE_USD} check`);

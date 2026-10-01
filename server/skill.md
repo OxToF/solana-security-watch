@@ -9,6 +9,7 @@ Base URL: `{{BASE}}`
 | Request | Price | Answer |
 |---|---|---|
 | `POST /agent/program` | **{{PROGRAM_PRICE}} USDC** | instant: who can change a deployed program, before you sign for it |
+| `POST /agent/watch` | **{{WATCH_PRICE}} USDC** | {{WATCH_DAYS}} days of hourly checks of a program or a `Cargo.lock`, a signed webhook on each change |
 | `POST /agent/check` | **{{CHECK_PRICE}} USDC** | instant: advisories for a whole `Cargo.lock`, or up to {{CHECK_MAX}} listed crates, at exact versions |
 | `POST /agent/scan` | **{{PRICE}} USDC** | a job: full scan of a public GitHub repo, report in about a minute |
 
@@ -40,6 +41,34 @@ The paid answer is **HTTP 200** with:
 
 An address that holds no program is answered 404 / 422 and **not charged**.
 It says who controls the program, not whether its code is safe.
+
+## Watch (`/agent/watch`)
+
+Pay once, get told when something you rely on changes, for {{WATCH_DAYS}} days.
+
+```sh
+POST {{BASE}}/agent/watch
+{"programId":"whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc","webhook":"https://you.example/hooks/watchdog"}
+```
+
+or `{"lockfile":"<the text of Cargo.lock>","webhook":"…"}`.
+
+- **Program**: pages on `authority-changed`, `multisig-changed` (threshold,
+  members or time lock), `code-upgraded`, `verification-lost`,
+  `program-closed`.
+- **Lockfile**: pages on `new-advisory` for a pinned crate.
+
+The paid answer (**HTTP 200**) holds the `baseline`, plus `watchId`, `secret`
+and `accessToken`, **each shown once**: save them. Each change is a `POST` to
+your webhook with header `x-watchdog-signature: sha256=<hex HMAC-SHA256 of the
+raw body, keyed with secret>`. Verify it before acting. One page per change.
+
+`GET statusUrl` with `Authorization: Bearer <accessToken>` lists the events
+(also kept when your webhook was down); `DELETE` cancels.
+
+The webhook must be `https` on a public address; redirects are not followed.
+Checks are hourly; a check that cannot reach the chain or the advisory
+database is retried, never reported as a change.
 
 ## Per-request check (`/agent/check`)
 
