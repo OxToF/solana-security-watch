@@ -23,6 +23,7 @@ import { Queue } from "./queue.mjs";
 import { sendReport } from "./email.mjs";
 import { verifyUsdcPayment, USDC_MINT } from "./verify.mjs";
 import { Facilitator, SOLANA_MAINNET, encodeHeader, decodeHeader, bazaarExtension } from "./x402.mjs";
+import { inspectProgram, isPubkey } from "./program.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -33,6 +34,7 @@ const PRICE_USD = Number(process.env.SCAN_PRICE_USD || 80); // web: a human, a b
 const AGENT_SCAN_PRICE_USD = Number(process.env.AGENT_SCAN_PRICE_USD || 0.5);
 const CHECK_PRICE_USD = Number(process.env.CHECK_PRICE_USD || 0.01);
 const CHECK_MAX_PACKAGES = 100;
+const PROGRAM_PRICE_USD = Number(process.env.PROGRAM_PRICE_USD || 0.05);
 // A whole Cargo.lock instead of a list: one OSV batch call, so the size barely costs us.
 const LOCKFILE_MAX_BYTES = 2_000_000;
 const LOCKFILE_MAX_PACKAGES = 5000;
@@ -412,13 +414,12 @@ function checkRequired(feePayer, error = "PAYMENT-SIGNATURE header is required")
 // Payloads in flight: two copies of one signed transfer must not both get an answer.
 const checking = new Set();
 
-async function handleCheck(req, res, body) {
-  let packages, lockfile;
-  try { ({ packages, lockfile } = parseCheckInput(body)); } catch (e) { return send(res, 400, { error: e.message }); }
-  const feePayer = await facilitator.feePayer(SOLANA_MAINNET);
-  const quote = (error) => ({ "payment-required": encodeHeader(checkRequired(feePayer, error)) });
+// One paid answer per request: verify the payment, compute, settle only once the
+// answer exists. compute() returns { body, record } or { status, error } (nothing charged).
+async function paidRequest(req, res, { feePayer, requirements, required, priceUsd, kind, compute }) {
+  const quote = (error) => ({ "payment-required": encodeHeader(required(feePayer, error)) });
   const header = req.headers["payment-signature"];
-  if (!header) return send(res, 402, { error: "payment_required", priceUsdc: CHECK_PRICE_USD, x402: "Requirements are in the PAYMENT-REQUIRED header; resend with PAYMENT-SIGNATURE.", manual: `${PUBLIC_BASE}/skill.md` }, quote("PAYMENT-SIGNATURE header is required"));
+  if (!header) return send(res, 402, { error: "payment_required", priceUsdc: priceUsd, x402: "Requirements are in the PAYMENT-REQUIRED header; resend with PAYMENT-SIGNATURE.", manual: `${PUBLIC_BASE}/skill.md` }, quote("PAYMENT-SIGNATURE header is required"));
   const payload = decodeHeader(header);
   if (!payload || payload.x402Version !== 2 || !payload.payload || typeof payload.payload.transaction !== "string" || !payload.accepted)
     return send(res, 400, { error: "PAYMENT-SIGNATURE is not a base64 x402 v2 PaymentPayload" });
@@ -427,7 +428,7 @@ async function handleCheck(req, res, body) {
   if (checking.has(key) || store.find((j) => j.payloadHash === key)) return send(res, 409, { error: "payment already used" });
   checking.add(key);
   try {
-    const reqs = checkRequirements(feePayer);
+    const reqs = requirements(feePayer);
     let v;
     try { v = await facilitator.verify(payload, reqs); }
     catch (e) { return send(res, 502, { error: `facilitator unreachable, nothing charged: ${e.message}` }); }
@@ -435,13 +436,12 @@ async function handleCheck(req, res, body) {
       const error = `payment not valid: ${v.invalidReason || "rejected by facilitator"}`;
       return send(res, 402, { error }, quote(error));
     }
-    const uniq = [...new Map(packages.map((p) => [`${p.name}@${p.version}`, p])).values()];
-    const deps = lockfile ? await scanDependenciesBatch(uniq, globalThis.fetch) : await scanDependencies(uniq, globalThis.fetch);
-    if (deps.failures === uniq.length) return send(res, 502, { error: "advisory database unreachable, nothing charged; try again" });
+    const answer = await compute();
+    if (answer.error) return send(res, answer.status || 502, { error: answer.error });
     let s;
     try { s = await facilitator.settle(payload, reqs); }
     catch (e) {
-      store.create({ kind: "check", agent: true, status: "settle_unknown", payloadHash: key, priceUsd: CHECK_PRICE_USD, via: "x402", error: String(e.message).slice(0, 300) });
+      store.create({ kind, agent: true, status: "settle_unknown", payloadHash: key, priceUsd, via: "x402", error: String(e.message).slice(0, 300) });
       return send(res, 502, { error: "settlement outcome unknown, do not pay again", contact: CONTACT });
     }
     if (!s.success || !s.transaction) {
@@ -450,20 +450,105 @@ async function handleCheck(req, res, body) {
     }
     if (store.findBySignature(s.transaction)) return send(res, 409, { error: "payment already used" });
     store.create({
-      kind: "check", agent: true, status: "done", payloadHash: key, paymentSignature: s.transaction, payer: s.payer || null,
-      priceUsd: CHECK_PRICE_USD, via: "x402", packages: uniq.length, advisoriesFound: deps.advisories.length, paidAt: new Date().toISOString(),
+      kind, agent: true, status: "done", payloadHash: key, paymentSignature: s.transaction, payer: s.payer || null,
+      priceUsd, via: "x402", ...answer.record, paidAt: new Date().toISOString(),
     });
-    return send(res, 200, {
-      checked: uniq.length - deps.failures,
-      advisories: deps.advisories,
-      notCheckedCount: deps.failures, // packages the advisory database did not answer for: check them again
-      ...(lockfile ? { lockfile } : {}),
-      transaction: s.transaction,
-      disclaimer: "Known advisories for these exact versions. Not an audit of the code that uses them.",
-    }, { "payment-response": encodeHeader(s) });
+    return send(res, 200, { ...answer.body, transaction: s.transaction }, { "payment-response": encodeHeader(s) });
   } finally {
     checking.delete(key);
   }
+}
+
+async function handleCheck(req, res, body) {
+  let packages, lockfile;
+  try { ({ packages, lockfile } = parseCheckInput(body)); } catch (e) { return send(res, 400, { error: e.message }); }
+  return paidRequest(req, res, {
+    feePayer: await facilitator.feePayer(SOLANA_MAINNET),
+    requirements: checkRequirements, required: checkRequired, priceUsd: CHECK_PRICE_USD, kind: "check",
+    compute: async () => {
+      const uniq = [...new Map(packages.map((p) => [`${p.name}@${p.version}`, p])).values()];
+      const deps = lockfile ? await scanDependenciesBatch(uniq, globalThis.fetch) : await scanDependencies(uniq, globalThis.fetch);
+      if (deps.failures === uniq.length) return { status: 502, error: "advisory database unreachable, nothing charged; try again" };
+      return {
+        record: { packages: uniq.length, advisoriesFound: deps.advisories.length },
+        body: {
+          checked: uniq.length - deps.failures,
+          advisories: deps.advisories,
+          notCheckedCount: deps.failures, // packages the advisory database did not answer for: check them again
+          ...(lockfile ? { lockfile } : {}),
+          disclaimer: "Known advisories for these exact versions. Not an audit of the code that uses them.",
+        },
+      };
+    },
+  });
+}
+
+// --- per-request program check -----------------------------------------------------
+// Who can change a deployed program, and what ties it to public code. See program.mjs.
+
+const PROGRAM_BAZAAR = bazaarExtension({
+  exampleBody: { programId: "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc" },
+  properties: {
+    programId: { type: "string", description: "Address of a deployed Solana mainnet program (base58)." },
+  },
+  required: ["programId"],
+  outputExample: {
+    programId: "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+    upgradeable: true,
+    authority: { address: "GwH3Hiv5mACLX3ufTw1pFsrhSPon5tdw252DBs4Rx4PV", kind: "squads-v4", threshold: 5, members: 13, timeLockSeconds: 86400, text: "Squads v4 multisig: 5 of 13 members must approve an upgrade, then a 24 h time lock." },
+    lastDeploy: { slot: 440170207, at: "2026-08-19T01:28:54.000Z" },
+    verifiedBuild: { verified: false, repo: "https://github.com/orca-so/whirlpools" },
+    securityTxt: { name: "Whirlpool", contacts: "…" },
+    flags: [{ severity: "medium", id: "build-mismatch", text: "A verification was submitted…" }],
+  },
+});
+
+const programRequirements = (feePayer) => ({ ...checkRequirements(feePayer), amount: String(Math.round(PROGRAM_PRICE_USD * 1e6)) });
+
+function programRequired(feePayer, error = "PAYMENT-SIGNATURE header is required") {
+  return {
+    x402Version: 2,
+    error,
+    resource: {
+      url: `${PUBLIC_BASE}/agent/program`,
+      description: "Use this before signing a transaction for a Solana program: who can change its code (single key, Squads multisig with threshold and time lock, DAO, or immutable), when it last changed, verified build, security.txt. Instant, per request.",
+      mimeType: "application/json",
+      serviceName: "Solana Watchdog program",
+      tags: ["security", "solana", "program", "upgrade-authority", "due-diligence"],
+    },
+    accepts: [programRequirements(feePayer)],
+    extensions: { bazaar: PROGRAM_BAZAAR },
+  };
+}
+
+const programRpc = async (method, params) => {
+  for (let i = 0; ; i++) {
+    const r = await fetch(SOLANA_RPC_URL, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
+    if (r.status === 429 && i < 3) { await new Promise((s) => setTimeout(s, 800 * (i + 1))); continue; }
+    const j = await r.json();
+    if (j.error) throw new Error(`${method}: ${j.error.message || JSON.stringify(j.error)}`);
+    return j.result;
+  }
+};
+
+async function handleProgram(req, res, body) {
+  const programId = body && body.programId;
+  if (!isPubkey(programId)) return send(res, 400, { error: "programId must be a base58 Solana address" });
+  return paidRequest(req, res, {
+    feePayer: await facilitator.feePayer(SOLANA_MAINNET),
+    requirements: programRequirements, required: programRequired, priceUsd: PROGRAM_PRICE_USD, kind: "program",
+    compute: async () => {
+      let r;
+      try { r = await inspectProgram(programId, { rpc: programRpc }); }
+      catch (e) { return { status: 502, error: `chain lookup failed, nothing charged: ${String(e.message).slice(0, 200)}` }; }
+      // Nothing to inspect is not worth a charge: most likely a wrong address.
+      if (!r.exists || !r.executable) return { status: r.exists ? 422 : 404, error: `${r.flags[0].text} Nothing charged.` };
+      return {
+        record: { programId, flags: r.flags.map((f) => f.id) },
+        body: { ...r, disclaimer: "Who controls this program and what can be verified about it. Not an audit of its code." },
+      };
+    },
+  });
 }
 
 function agentJobView(job) {
@@ -486,11 +571,13 @@ function agentRegistration() {
   return {
     type: "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
     name: "Solana Watchdog",
-    description: "Security scan of a public Solana / Anchor GitHub repo: RustSec advisories on the exact pinned versions, split into the on-chain surface and CLI tooling, build hygiene, and leads for known Solana bug classes with file:line. JSON + Markdown + HTML report. Agents pay per call over x402 (USDC on Solana). A scan, not an audit.",
+    description: "Security checks for Solana code and programs. Who can change a deployed program (single key, Squads multisig with threshold and time lock, DAO, immutable) before you sign for it; RustSec advisories for a Cargo.lock; a full scan of a public Solana / Anchor GitHub repo with on-chain vs tooling triage, build hygiene and leads for known Solana bug classes. Agents pay per call over x402 (USDC on Solana). Checks, not audits.",
     image: `${PUBLIC_BASE}/logo.svg`,
     services: [
       { name: "web", endpoint: LANDING_URL },
       { name: "x402", endpoint: `${PUBLIC_BASE}/agent/scan` },
+      { name: "x402", endpoint: `${PUBLIC_BASE}/agent/program` },
+      { name: "x402", endpoint: `${PUBLIC_BASE}/agent/check` },
       { name: "agent-manual", endpoint: `${PUBLIC_BASE}/skill.md` },
     ],
     x402Support: true,
@@ -538,6 +625,7 @@ const server = createServer(async (req, res) => {
         .replaceAll("{{BASE}}", PUBLIC_BASE)
         .replaceAll("{{PRICE}}", String(AGENT_SCAN_PRICE_USD))
         .replaceAll("{{CHECK_PRICE}}", String(CHECK_PRICE_USD))
+        .replaceAll("{{PROGRAM_PRICE}}", String(PROGRAM_PRICE_USD))
         .replaceAll("{{CHECK_MAX}}", String(CHECK_MAX_PACKAGES))
         .replaceAll("{{MERCHANT}}", MERCHANT_WALLET || "(not configured)"), { "content-type": "text/markdown; charset=utf-8" });
     }
@@ -606,6 +694,14 @@ const server = createServer(async (req, res) => {
       let body;
       try { body = await readBody(req, LOCKFILE_MAX_BYTES + 1e4); } catch { return send(res, 400, { error: "bad json" }); }
       return handleCheck(req, res, body);
+    }
+
+    if (req.method === "POST" && url.pathname === "/agent/program") {
+      if (!MERCHANT_WALLET || !facilitator) return send(res, 503, { error: "payments not configured" });
+      if (rateLimited(ip, 120)) return send(res, 429, { error: "rate limited" });
+      let body;
+      try { body = await readBody(req); } catch { return send(res, 400, { error: "bad json" }); }
+      return handleProgram(req, res, body);
     }
 
     if (req.method === "GET" && url.pathname.startsWith("/agent/jobs/")) {
