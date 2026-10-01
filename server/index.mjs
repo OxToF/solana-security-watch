@@ -63,9 +63,12 @@ const CONTACT = process.env.SUPPORT_EMAIL || "solanawatchdog@proton.me";
 const PUBLIC_BASE = (process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
 // x402 v2 settlement. "off" leaves only the memo flow.
 const FACILITATOR_URL = process.env.FACILITATOR_URL || "https://facilitator.payai.network";
-// Throws at boot when the key is half-set or malformed: PayAI refuses a bad key on
-// every payment instead of falling back to the free lane.
-const payaiAuth = PayAIAuth.fromEnv();
+// A bad key is never sent: PayAI refuses every payment that carries one. It is not
+// fatal either (on 2026-10-01 a masked secret took both apps down at boot): the
+// server stays up on the public lane and says so at boot and in /health.
+let payaiAuth = null, payaiAuthError = null;
+try { payaiAuth = PayAIAuth.fromEnv(); }
+catch (e) { payaiAuthError = e.message; }
 const facilitator = FACILITATOR_URL === "off" ? null : new Facilitator({ url: FACILITATOR_URL, auth: payaiAuth });
 // ERC-8004 identity, once registered on Base: the agentId minted by register().
 const ERC8004_REGISTRY = "eip155:8453:0x8004A169FB4a3325136EB29fA0ceB6D2e539a432";
@@ -727,7 +730,7 @@ const server = createServer(async (req, res) => {
   if (req.method === "OPTIONS") return send(res, 204, "");
 
   try {
-    if (req.method === "GET" && url.pathname === "/health") return send(res, 200, { ok: true });
+    if (req.method === "GET" && url.pathname === "/health") return send(res, 200, { ok: true, facilitatorLane: payaiAuth ? "payai" : payaiAuthError ? "public-key-ignored" : "public" });
 
     // The private report link from the email: /r/<jobId>/<token>
     if (req.method === "GET" && url.pathname.startsWith("/r/")) {
@@ -950,7 +953,8 @@ const server = createServer(async (req, res) => {
 
 watcher.start();
 server.listen(PORT, () => {
-  console.log(`[server] facilitator lane: ${payaiAuth ? `PayAI ${payaiAuth.label()}` : "public (no key)"}`);
+  console.log(`[server] facilitator lane: ${payaiAuth ? `PayAI ${payaiAuth.label()}` : payaiAuthError ? "public, PAYAI KEY IGNORED" : "public (no key)"}`);
+  if (payaiAuthError) console.error(`[server] ERROR PayAI key ignored: ${payaiAuthError}`);
   console.log(`[server] solana-security-watch scan backend on :${PORT}`);
   console.log(`[server] admin ${ADMIN_TOKEN ? "enabled" : "DISABLED (set ADMIN_TOKEN)"} · email ${process.env.RESEND_API_KEY ? "Resend" : "DEV mode (disk)"} · price ${PRICE_USD} USDC web · agents ${AGENT_SCAN_PRICE_USD} scan / ${CHECK_PRICE_USD} check`);
   console.log(`[server] payments ${MERCHANT_WALLET ? "on -> " + MERCHANT_WALLET : "OFF (set MERCHANT_WALLET to enable /pay/verify)"} · rpc ${rpcHost(SOLANA_RPC_URL)}`);
