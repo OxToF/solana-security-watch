@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
-import { runScan, parseGithubUrl, fixMailto, WATCHDOG_LOGO } from "../bin/scan.mjs";
+import { runScan, parseGithubUrl, fixMailto, WATCHDOG_LOGO, scanDependencies } from "../bin/scan.mjs";
 import { Store } from "./store.mjs";
 import { Queue } from "./queue.mjs";
 import { sendReport } from "./email.mjs";
@@ -26,7 +26,13 @@ import { Facilitator, SOLANA_MAINNET, encodeHeader, decodeHeader, bazaarExtensio
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
-const PRICE_USD = Number(process.env.SCAN_PRICE_USD || 80);
+const PRICE_USD = Number(process.env.SCAN_PRICE_USD || 80); // web: a human, a branded report by email
+// Agents buy per request, at volume: both prices sit under the $1 per-payment cap
+// x402 clients ship with, so an agent on default settings can pay without a human.
+// A PayAI settlement costs about $0.0015 on Solana, so a cent still clears it.
+const AGENT_SCAN_PRICE_USD = Number(process.env.AGENT_SCAN_PRICE_USD || 0.5);
+const CHECK_PRICE_USD = Number(process.env.CHECK_PRICE_USD || 0.01);
+const CHECK_MAX_PACKAGES = 100;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || null;
 const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN || "*";
 const ALLOW_LOCAL = process.env.ALLOW_LOCAL === "1"; // dev/testing only
@@ -224,6 +230,21 @@ function requirementsFor(job, feePayer) {
   };
 }
 
+const SCAN_BAZAAR = bazaarExtension({
+  exampleBody: { repo: "https://github.com/solana-developers/program-examples" },
+  properties: {
+    repo: { type: "string", description: "Public GitHub repository URL, https://github.com/<owner>/<repo>" },
+    email: { type: "string", description: "Optional. Also email the report here." },
+  },
+  required: ["repo"],
+  outputExample: {
+    jobId: "8f0c6a2e-1b7d-4c1e-9d3a-2f5e6b7c8d9e",
+    status: "paid",
+    accessToken: "<shown once, send as Authorization: Bearer>",
+    statusUrl: `${PUBLIC_BASE}/agent/jobs/8f0c6a2e-1b7d-4c1e-9d3a-2f5e6b7c8d9e`,
+  },
+});
+
 function x402Required(job, feePayer, error) {
   return {
     x402Version: 2,
@@ -236,7 +257,7 @@ function x402Required(job, feePayer, error) {
       tags: ["security", "solana", "anchor", "dependencies", "code-scan"],
     },
     accepts: [requirementsFor(job, feePayer)],
-    extensions: { bazaar: bazaarExtension({ exampleRepo: "https://github.com/solana-developers/program-examples", base: PUBLIC_BASE }) },
+    extensions: { bazaar: SCAN_BAZAAR },
   };
 }
 
@@ -304,6 +325,122 @@ async function settleX402(res, payload) {
     poll: "GET statusUrl with Authorization: Bearer <accessToken> every 15s; a scan takes about a minute. accessToken is shown once.",
     transaction: s.transaction,
   }, { "payment-response": encodeHeader(s) });
+}
+
+// --- per-request advisory check --------------------------------------------------
+// No repo, no job: the pinned packages in the body, their advisories in the
+// answer. The payment is verified first and settled only once the answer exists,
+// so a lookup that fails costs the agent nothing.
+
+const CHECK_BAZAAR = bazaarExtension({
+  exampleBody: { packages: [{ name: "borsh", version: "0.9.3" }, { name: "anchor-lang", version: "0.29.0" }] },
+  properties: {
+    packages: {
+      type: "array", minItems: 1, maxItems: CHECK_MAX_PACKAGES,
+      description: "crates.io packages at the exact versions pinned in Cargo.lock",
+      items: { type: "object", properties: { name: { type: "string" }, version: { type: "string" } }, required: ["name", "version"] },
+    },
+  },
+  required: ["packages"],
+  outputExample: {
+    checked: 2,
+    advisories: [{ id: "RUSTSEC-2023-0033", crates: ["borsh 0.9.3"], severity: "MODERATE", summary: "Parsing borsh messages with ZST which are not-copy/clone is unsound", url: "https://rustsec.org/advisories/RUSTSEC-2023-0033.html" }],
+    notCheckedCount: 0,
+  },
+});
+
+function parsePackages(body) {
+  const pk = body && body.packages;
+  if (!Array.isArray(pk) || pk.length === 0 || pk.length > CHECK_MAX_PACKAGES)
+    throw new Error(`packages must be a list of 1 to ${CHECK_MAX_PACKAGES} {name, version}`);
+  return pk.map((p, i) => {
+    const name = p && String(p.name || ""), version = p && String(p.version || "");
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(name) || !/^[0-9A-Za-z.+-]{1,64}$/.test(version))
+      throw new Error(`packages[${i}] is not a crates.io {name, version}`);
+    return { name, version };
+  });
+}
+
+const checkRequirements = (feePayer) => ({
+  scheme: "exact",
+  network: SOLANA_MAINNET,
+  amount: String(Math.round(CHECK_PRICE_USD * 1e6)),
+  asset: USDC_MINT,
+  payTo: MERCHANT_WALLET,
+  maxTimeoutSeconds: 120,
+  extra: { feePayer },
+});
+
+function checkRequired(feePayer, error = "PAYMENT-SIGNATURE header is required") {
+  return {
+    x402Version: 2,
+    error,
+    resource: {
+      url: `${PUBLIC_BASE}/agent/check`,
+      description: `Solana Watchdog advisory check: RustSec/OSV advisories affecting up to ${CHECK_MAX_PACKAGES} crates at their exact pinned versions. Instant, per request.`,
+      mimeType: "application/json",
+      serviceName: "Solana Watchdog check",
+      tags: ["security", "solana", "rust", "advisories", "dependencies"],
+    },
+    accepts: [checkRequirements(feePayer)],
+    extensions: { bazaar: CHECK_BAZAAR },
+  };
+}
+
+// Payloads in flight: two copies of one signed transfer must not both get an answer.
+const checking = new Set();
+
+async function handleCheck(req, res, body) {
+  let packages;
+  try { packages = parsePackages(body); } catch (e) { return send(res, 400, { error: e.message }); }
+  const feePayer = await facilitator.feePayer(SOLANA_MAINNET);
+  const quote = (error) => ({ "payment-required": encodeHeader(checkRequired(feePayer, error)) });
+  const header = req.headers["payment-signature"];
+  if (!header) return send(res, 402, { error: "payment_required", priceUsdc: CHECK_PRICE_USD, x402: "Requirements are in the PAYMENT-REQUIRED header; resend with PAYMENT-SIGNATURE.", manual: `${PUBLIC_BASE}/skill.md` }, quote("PAYMENT-SIGNATURE header is required"));
+  const payload = decodeHeader(header);
+  if (!payload || payload.x402Version !== 2 || !payload.payload || typeof payload.payload.transaction !== "string" || !payload.accepted)
+    return send(res, 400, { error: "PAYMENT-SIGNATURE is not a base64 x402 v2 PaymentPayload" });
+  if (payload.accepted.network !== SOLANA_MAINNET) return send(res, 402, { error: `this endpoint settles on ${SOLANA_MAINNET} only` }, quote("wrong network"));
+  const key = hashToken(payload.payload.transaction);
+  if (checking.has(key) || store.find((j) => j.payloadHash === key)) return send(res, 409, { error: "payment already used" });
+  checking.add(key);
+  try {
+    const reqs = checkRequirements(feePayer);
+    let v;
+    try { v = await facilitator.verify(payload, reqs); }
+    catch (e) { return send(res, 502, { error: `facilitator unreachable, nothing charged: ${e.message}` }); }
+    if (!v.isValid) {
+      const error = `payment not valid: ${v.invalidReason || "rejected by facilitator"}`;
+      return send(res, 402, { error }, quote(error));
+    }
+    const uniq = [...new Map(packages.map((p) => [`${p.name}@${p.version}`, p])).values()];
+    const deps = await scanDependencies(uniq, globalThis.fetch);
+    if (deps.failures === uniq.length) return send(res, 502, { error: "advisory database unreachable, nothing charged; try again" });
+    let s;
+    try { s = await facilitator.settle(payload, reqs); }
+    catch (e) {
+      store.create({ kind: "check", agent: true, status: "settle_unknown", payloadHash: key, priceUsd: CHECK_PRICE_USD, via: "x402", error: String(e.message).slice(0, 300) });
+      return send(res, 502, { error: "settlement outcome unknown, do not pay again", contact: CONTACT });
+    }
+    if (!s.success || !s.transaction) {
+      const error = `settlement failed, nothing charged: ${s.errorReason || "unknown"}`;
+      return send(res, 402, { error }, { ...quote(error), "payment-response": encodeHeader(s) });
+    }
+    if (store.findBySignature(s.transaction)) return send(res, 409, { error: "payment already used" });
+    store.create({
+      kind: "check", agent: true, status: "done", payloadHash: key, paymentSignature: s.transaction, payer: s.payer || null,
+      priceUsd: CHECK_PRICE_USD, via: "x402", packages: uniq.length, advisoriesFound: deps.advisories.length, paidAt: new Date().toISOString(),
+    });
+    return send(res, 200, {
+      checked: uniq.length - deps.failures,
+      advisories: deps.advisories,
+      notCheckedCount: deps.failures, // packages the advisory database did not answer for: check them again
+      transaction: s.transaction,
+      disclaimer: "Known advisories for these exact versions. Not an audit of the code that uses them.",
+    }, { "payment-response": encodeHeader(s) });
+  } finally {
+    checking.delete(key);
+  }
 }
 
 function agentJobView(job) {
@@ -376,7 +513,9 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && (url.pathname === "/skill.md" || url.pathname === "/agent")) {
       return send(res, 200, SKILL_MD
         .replaceAll("{{BASE}}", PUBLIC_BASE)
-        .replaceAll("{{PRICE}}", String(PRICE_USD))
+        .replaceAll("{{PRICE}}", String(AGENT_SCAN_PRICE_USD))
+        .replaceAll("{{CHECK_PRICE}}", String(CHECK_PRICE_USD))
+        .replaceAll("{{CHECK_MAX}}", String(CHECK_MAX_PACKAGES))
         .replaceAll("{{MERCHANT}}", MERCHANT_WALLET || "(not configured)"), { "content-type": "text/markdown; charset=utf-8" });
     }
 
@@ -430,12 +569,18 @@ const server = createServer(async (req, res) => {
       const job = store.create({
         repo: repoInfo.url,
         email: body.email || null,
-        priceUsd: PRICE_USD,
+        priceUsd: AGENT_SCAN_PRICE_USD,
         agent: true,
         memo: `ssw:${randomBytes(9).toString("base64url")}`,
         accessTokenHash: hashToken(accessToken),
       });
       return send(res, 402, paymentRequired({ ...job, _accessToken: accessToken }), await quoteHeaders(job));
+    }
+
+    if (req.method === "POST" && url.pathname === "/agent/check") {
+      if (!MERCHANT_WALLET || !facilitator) return send(res, 503, { error: "payments not configured" });
+      if (rateLimited(ip, 120)) return send(res, 429, { error: "rate limited" });
+      return handleCheck(req, res, await readBody(req));
     }
 
     if (req.method === "GET" && url.pathname.startsWith("/agent/jobs/")) {
@@ -537,7 +682,7 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`[server] solana-security-watch scan backend on :${PORT}`);
-  console.log(`[server] admin ${ADMIN_TOKEN ? "enabled" : "DISABLED (set ADMIN_TOKEN)"} · email ${process.env.RESEND_API_KEY ? "Resend" : "DEV mode (disk)"} · price ${PRICE_USD} USDC`);
+  console.log(`[server] admin ${ADMIN_TOKEN ? "enabled" : "DISABLED (set ADMIN_TOKEN)"} · email ${process.env.RESEND_API_KEY ? "Resend" : "DEV mode (disk)"} · price ${PRICE_USD} USDC web · agents ${AGENT_SCAN_PRICE_USD} scan / ${CHECK_PRICE_USD} check`);
   console.log(`[server] payments ${MERCHANT_WALLET ? "on -> " + MERCHANT_WALLET : "OFF (set MERCHANT_WALLET to enable /pay/verify)"} · rpc ${rpcHost(SOLANA_RPC_URL)}`);
 });
 

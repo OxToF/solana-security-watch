@@ -54,7 +54,8 @@ test("underpayment is refused even with the right memo", () => {
 });
 
 // --- end to end ---------------------------------------------------------------
-let rpc, fac, srv, base, currentMemo = null, x402Memo = null;
+let rpc, fac, osv, srv, base, currentMemo = null, x402Memo = null, osvDown = false;
+const osvCalls = [];
 // What the fake facilitator was asked to settle against, per call.
 const facCalls = [];
 const port = 18000 + Math.floor(Math.random() * 1000);
@@ -85,13 +86,27 @@ before(async () => {
       facCalls.push({ path: req.url, body });
       const tx = body.paymentPayload.payload.transaction;
       if (req.url === "/verify") return res.end(JSON.stringify(tx === "BAD" ? { isValid: false, invalidReason: "invalid_exact_svm_payload_transaction" } : { isValid: true, payer: "Payer111" }));
+      const settled = { GOOD: SIG_X402, CHK1: "6".repeat(88), CHK2: "7".repeat(88) }[tx] || SIG_X402;
       if (req.url === "/settle") return res.end(JSON.stringify(tx === "NOSETTLE"
         ? { success: false, errorReason: "insufficient_funds", transaction: "", network: SOLANA_MAINNET }
-        : { success: true, transaction: SIG_X402, network: SOLANA_MAINNET, payer: "Payer111" }));
+        : { success: true, transaction: settled, network: SOLANA_MAINNET, payer: "Payer111" }));
       res.end("{}");
     });
   });
   await new Promise((r) => fac.listen(0, r));
+  // Fake OSV: borsh 0.9.3 carries one advisory, everything else is clean.
+  osv = createServer((req, res) => {
+    let b = "";
+    req.on("data", (c) => (b += c));
+    req.on("end", () => {
+      const q = JSON.parse(b);
+      osvCalls.push(q);
+      if (osvDown) { res.writeHead(500); return res.end(); }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(q.package.name === "borsh" ? { vulns: [{ id: "RUSTSEC-2023-0033", aliases: ["GHSA-fjx5-qpf4-xjf2"], summary: "borsh ZST unsound" }] } : {}));
+    });
+  });
+  await new Promise((r) => osv.listen(0, r));
   base = `http://127.0.0.1:${port}`;
   const dir = mkdtempSync(join(tmpdir(), "ssw-agent-test-"));
   srv = spawn(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), "index.mjs")], {
@@ -102,6 +117,7 @@ before(async () => {
       MERCHANT_WALLET: MERCHANT,
       SOLANA_RPC_URL: `http://127.0.0.1:${rpc.address().port}`,
       FACILITATOR_URL: `http://127.0.0.1:${fac.address().port}`,
+      OSV_QUERY_URL: `http://127.0.0.1:${osv.address().port}`,
       SCAN_PRICE_USD: "69",
       PUBLIC_BASE_URL: base,
       RESEND_API_KEY: "",
@@ -115,7 +131,7 @@ before(async () => {
   throw new Error("server did not start");
 });
 
-after(() => { srv?.kill(); rpc?.close(); fac?.close(); });
+after(() => { srv?.kill(); rpc?.close(); fac?.close(); osv?.close(); });
 
 const post = (body) => fetch(`${base}/agent/scan`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
@@ -132,7 +148,7 @@ test("agent flow: quote, pay, poll", async () => {
   const acc = quote.accepts[0];
   assert.equal(acc.payTo, MERCHANT);
   assert.equal(acc.asset, USDC_MINT);
-  assert.equal(acc.maxAmountRequired, "69000000");
+  assert.equal(acc.maxAmountRequired, "500000"); // agents: $0.50, not the $69 web price
   assert.match(acc.extra.memo, /^ssw:/);
   assert.ok(quote.accessToken && quote.jobId);
   currentMemo = acc.extra.memo;
@@ -182,7 +198,7 @@ test("x402 v2: quote header, settle through the facilitator, token in the paid r
   assert.equal(required.x402Version, 2);
   const [req] = required.accepts;
   assert.equal(req.network, SOLANA_MAINNET);
-  assert.equal(req.amount, "69000000");
+  assert.equal(req.amount, "500000");
   assert.equal(req.payTo, MERCHANT);
   assert.equal(req.extra.feePayer, FEE_PAYER);
   assert.match(req.extra.memo, /^ssw:/);
@@ -209,7 +225,7 @@ test("x402 v2: quote header, settle through the facilitator, token in the paid r
   const ok = await pay("GOOD", { ...req, amount: "1", payTo: "Attacker1111111111111111111111111111111111" });
   assert.equal(ok.status, 200);
   for (const c of facCalls) {
-    assert.equal(c.body.paymentRequirements.amount, "69000000");
+    assert.equal(c.body.paymentRequirements.amount, "500000");
     assert.equal(c.body.paymentRequirements.payTo, MERCHANT);
     assert.equal(c.body.paymentRequirements.extra.memo, x402Memo);
   }
@@ -240,4 +256,56 @@ test("ERC-8004 registration file: x402 service, own domain, no registration befo
   const logo = await fetch(reg.image);
   assert.equal(logo.status, 200);
   assert.match(logo.headers.get("content-type"), /image\/svg\+xml/);
+});
+
+test("per-request check: instant answer, settled only once the answer exists", async () => {
+  const check = (body, header) => fetch(`${base}/agent/check`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...(header ? { "payment-signature": header } : {}) },
+    body: JSON.stringify(body),
+  });
+  const packages = [{ name: "borsh", version: "0.9.3" }, { name: "anchor-lang", version: "0.29.0" }, { name: "borsh", version: "0.9.3" }];
+
+  assert.equal((await check({ packages: [] })).status, 400);
+  assert.equal((await check({ packages: [{ name: "a b", version: "1" }] })).status, 400);
+  assert.equal((await check({ packages: Array.from({ length: 101 }, () => ({ name: "x", version: "1.0.0" })) })).status, 400);
+
+  const q = await check({ packages });
+  assert.equal(q.status, 402);
+  const required = decodeHeader(q.headers.get("payment-required"));
+  const [req] = required.accepts;
+  assert.equal(req.amount, "10000"); // $0.01
+  assert.equal(req.extra.memo, undefined);
+  assert.equal(req.extra.feePayer, FEE_PAYER);
+  assert.equal(required.resource.url, `${base}/agent/check`);
+  assert.ok(required.resource.serviceName.length <= 32);
+  const pay = (transaction, accepted = req) => encodeHeader({ x402Version: 2, resource: required.resource, accepted, payload: { transaction }, extensions: required.extensions });
+
+  // Rejected payment: no lookup is made.
+  osvCalls.length = 0;
+  assert.equal((await check({ packages }, pay("BAD"))).status, 402);
+  assert.equal(osvCalls.length, 0);
+
+  // Advisory database down: nothing is settled.
+  osvDown = true; facCalls.length = 0;
+  assert.equal((await check({ packages }, pay("CHK1"))).status, 502);
+  assert.deepEqual(facCalls.map((c) => c.path), ["/verify"]);
+  osvDown = false;
+
+  // Settled against our amount even if the echo says otherwise; duplicates queried once.
+  facCalls.length = 0; osvCalls.length = 0;
+  const ok = await check({ packages }, pay("CHK1", { ...req, amount: "1" }));
+  assert.equal(ok.status, 200);
+  assert.equal(osvCalls.length, 2);
+  assert.deepEqual(facCalls.map((c) => c.path), ["/verify", "/settle"]);
+  for (const c of facCalls) assert.equal(c.body.paymentRequirements.amount, "10000");
+  const out = await ok.json();
+  assert.equal(out.checked, 2);
+  assert.equal(out.advisories.length, 1);
+  assert.equal(out.advisories[0].id, "RUSTSEC-2023-0033");
+  assert.equal(decodeHeader(ok.headers.get("payment-response")).transaction, "6".repeat(88));
+
+  // The same signed transfer twice buys one answer.
+  assert.equal((await check({ packages }, pay("CHK1"))).status, 409);
+  assert.equal((await check({ packages }, pay("CHK2"))).status, 200);
 });
