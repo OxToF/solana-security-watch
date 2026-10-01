@@ -12,6 +12,8 @@ import { join, relative, sep } from "node:path";
 import { normalize } from "./collect.mjs";
 
 const OSV_QUERY = process.env.OSV_QUERY_URL || "https://api.osv.dev/v1/query";
+const OSV_BATCH = process.env.OSV_BATCH_URL || "https://api.osv.dev/v1/querybatch";
+const OSV_VULNS = process.env.OSV_VULNS_URL || "https://api.osv.dev/v1/vulns";
 
 // Only allow canonical public GitHub HTTPS URLs — no shell, no SSH, no arbitrary
 // hosts. Returns { owner, repo, url } or throws.
@@ -44,7 +46,16 @@ async function fetchRepo(owner, repo, workdir, log, fetchImpl, token) {
 
 // Minimal Cargo.lock parser: [[package]] name/version pairs. Good enough to learn
 // the repo's exact pinned dependency set.
-export function parseCargoLock(text) {
+// With registryOnly, keeps crates.io packages only: a workspace or git crate that
+// happens to share a published crate's name would otherwise borrow its advisories.
+export function parseCargoLock(text, { registryOnly = false } = {}) {
+  if (registryOnly) {
+    return text.split(/^\[\[package\]\]/m).slice(1).flatMap((block) => {
+      const f = (k) => block.match(new RegExp(`^${k}\\s*=\\s*"([^"]+)"`, "m"))?.[1];
+      const name = f("name"), version = f("version"), source = f("source") || "";
+      return name && version && source.startsWith("registry+https://github.com/rust-lang/crates.io-index") ? [{ name, version }] : [];
+    });
+  }
   const out = [];
   let name = null;
   for (const line of text.split("\n")) {
@@ -113,6 +124,42 @@ export async function scanDependencies(crates, fetchImpl, log = () => {}) {
     }
   }
   return { advisories: normalize(rawByCrate), failures };
+}
+
+// Same answer as scanDependencies, for a whole lockfile: one OSV batch request per
+// thousand packages instead of one request each, then the details of each distinct
+// advisory once. A batch that fails counts all of its packages as not checked.
+export async function scanDependenciesBatch(pkgs, fetchImpl, { ecosystem = "crates.io" } = {}) {
+  const uniq = [...new Map(pkgs.map((p) => [`${p.name}@${p.version}`, p])).values()];
+  const idsByPkg = [];
+  let failures = 0;
+  for (let i = 0; i < uniq.length; i += 1000) {
+    const chunk = uniq.slice(i, i + 1000);
+    let results;
+    try {
+      const res = await fetchImpl(OSV_BATCH, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ queries: chunk.map((c) => ({ package: { ecosystem, name: c.name }, version: c.version })) }),
+      });
+      results = res.ok ? (await res.json()).results : null;
+    } catch { results = null; }
+    if (!Array.isArray(results) || results.length !== chunk.length) { failures += chunk.length; continue; }
+    chunk.forEach((c, j) => {
+      const ids = (results[j].vulns || []).map((v) => v.id);
+      if (ids.length) idsByPkg.push([`${c.name} ${c.version}`, ids]);
+    });
+  }
+  const details = new Map();
+  const ids = [...new Set(idsByPkg.flatMap(([, v]) => v))];
+  for (let i = 0; i < ids.length; i += 8) {
+    await Promise.all(ids.slice(i, i + 8).map(async (id) => {
+      try {
+        const res = await fetchImpl(`${OSV_VULNS}/${encodeURIComponent(id)}`);
+        details.set(id, res.ok ? await res.json() : { id });
+      } catch { details.set(id, { id }); }
+    }));
+  }
+  return { advisories: normalize(idsByPkg.map(([k, v]) => [k, v.map((id) => details.get(id))])), failures, packages: uniq.length };
 }
 
 // Grep-lead patterns mapped to vuln-classes.md. Each hit is a LEAD to confirm by

@@ -86,7 +86,7 @@ before(async () => {
       facCalls.push({ path: req.url, body });
       const tx = body.paymentPayload.payload.transaction;
       if (req.url === "/verify") return res.end(JSON.stringify(tx === "BAD" ? { isValid: false, invalidReason: "invalid_exact_svm_payload_transaction" } : { isValid: true, payer: "Payer111" }));
-      const settled = { GOOD: SIG_X402, CHK1: "6".repeat(88), CHK2: "7".repeat(88) }[tx] || SIG_X402;
+      const settled = { GOOD: SIG_X402, CHK1: "6".repeat(88), CHK2: "7".repeat(88), CHK3: "8".repeat(88) }[tx] || SIG_X402;
       if (req.url === "/settle") return res.end(JSON.stringify(tx === "NOSETTLE"
         ? { success: false, errorReason: "insufficient_funds", transaction: "", network: SOLANA_MAINNET }
         : { success: true, transaction: settled, network: SOLANA_MAINNET, payer: "Payer111" }));
@@ -99,9 +99,20 @@ before(async () => {
     let b = "";
     req.on("data", (c) => (b += c));
     req.on("end", () => {
+      if (osvDown) { res.writeHead(500); return res.end(); }
+      if (req.url === "/v1/querybatch") {
+        const { queries } = JSON.parse(b);
+        osvCalls.push({ batch: queries.length });
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ results: queries.map((q) => (q.package.name === "borsh" ? { vulns: [{ id: "RUSTSEC-2023-0033" }] } : {})) }));
+      }
+      if (req.url.startsWith("/v1/vulns/")) {
+        osvCalls.push({ vuln: req.url });
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ id: "RUSTSEC-2023-0033", aliases: ["GHSA-fjx5-qpf4-xjf2"], summary: "borsh ZST unsound" }));
+      }
       const q = JSON.parse(b);
       osvCalls.push(q);
-      if (osvDown) { res.writeHead(500); return res.end(); }
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(q.package.name === "borsh" ? { vulns: [{ id: "RUSTSEC-2023-0033", aliases: ["GHSA-fjx5-qpf4-xjf2"], summary: "borsh ZST unsound" }] } : {}));
     });
@@ -118,6 +129,8 @@ before(async () => {
       SOLANA_RPC_URL: `http://127.0.0.1:${rpc.address().port}`,
       FACILITATOR_URL: `http://127.0.0.1:${fac.address().port}`,
       OSV_QUERY_URL: `http://127.0.0.1:${osv.address().port}`,
+      OSV_BATCH_URL: `http://127.0.0.1:${osv.address().port}/v1/querybatch`,
+      OSV_VULNS_URL: `http://127.0.0.1:${osv.address().port}/v1/vulns`,
       SCAN_PRICE_USD: "69",
       PUBLIC_BASE_URL: base,
       RESEND_API_KEY: "",
@@ -308,4 +321,47 @@ test("per-request check: instant answer, settled only once the answer exists", a
   // The same signed transfer twice buys one answer.
   assert.equal((await check({ packages }, pay("CHK1"))).status, 409);
   assert.equal((await check({ packages }, pay("CHK2"))).status, 200);
+});
+
+test("/agent/check takes a whole Cargo.lock, crates.io packages only, in one batch", async () => {
+  const reg = 'source = "registry+https://github.com/rust-lang/crates.io-index"';
+  const lock = [
+    "version = 3", "",
+    "[[package]]", 'name = "borsh"', 'version = "0.9.3"', reg, "",
+    "[[package]]", 'name = "serde"', 'version = "1.0.200"', reg, "",
+    // Same name as a published crate, but it is ours: must not be checked.
+    "[[package]]", 'name = "router"', 'version = "0.1.0"', "",
+    "[[package]]", 'name = "anchor-syn"', 'version = "0.31.1"', 'source = "git+https://github.com/x/anchor?rev=abc#abc"', "",
+  ].join("\n");
+  const check = (body, payment) => fetch(`${base}/agent/check`, {
+    method: "POST", headers: { "content-type": "application/json", ...(payment ? { "payment-signature": payment } : {}) }, body: JSON.stringify(body),
+  });
+  assert.equal((await check({ lockfile: "not a lockfile" })).status, 400);
+  assert.equal((await check({ lockfile: lock, packages: [{ name: "borsh", version: "0.9.3" }] })).status, 400);
+  assert.equal((await check({ lockfile: "[[package]]\nname = \"router\"\nversion = \"0.1.0\"\n" })).status, 400);
+
+  const q = await check({ lockfile: lock });
+  assert.equal(q.status, 402);
+  const required = decodeHeader(q.headers.get("payment-required"));
+  const [req] = required.accepts;
+  assert.equal(req.amount, "10000"); // same price as a package list
+  assert.ok(required.extensions.bazaar.schema.properties.input.properties.body.properties.lockfile);
+  const pay = (transaction) => encodeHeader({ x402Version: 2, resource: required.resource, accepted: req, payload: { transaction }, extensions: required.extensions });
+
+  osvCalls.length = 0;
+  const ok = await check({ lockfile: lock }, pay("CHK3"));
+  assert.equal(ok.status, 200);
+  assert.deepEqual(osvCalls, [{ batch: 2 }, { vuln: "/v1/vulns/RUSTSEC-2023-0033" }]);
+  const out = await ok.json();
+  assert.equal(out.checked, 2);
+  assert.deepEqual(out.lockfile, { type: "Cargo.lock", packages: 2, skipped: 2 });
+  assert.equal(out.advisories.length, 1);
+  assert.equal(out.advisories[0].id, "RUSTSEC-2023-0033");
+  assert.deepEqual(out.advisories[0].crates, ["borsh 0.9.3"]);
+
+  // A batch the database does not answer: nothing settled.
+  osvDown = true; facCalls.length = 0;
+  assert.equal((await check({ lockfile: lock }, pay("CHK4"))).status, 502);
+  assert.deepEqual(facCalls.map((c) => c.path), ["/verify"]);
+  osvDown = false;
 });

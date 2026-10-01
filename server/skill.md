@@ -8,7 +8,7 @@ Base URL: `{{BASE}}`
 
 | Request | Price | Answer |
 |---|---|---|
-| `POST /agent/check` | **{{CHECK_PRICE}} USDC** | instant: advisories for up to {{CHECK_MAX}} crates at exact versions |
+| `POST /agent/check` | **{{CHECK_PRICE}} USDC** | instant: advisories for a whole `Cargo.lock`, or up to {{CHECK_MAX}} listed crates, at exact versions |
 | `POST /agent/scan` | **{{PRICE}} USDC** | a job: full scan of a public GitHub repo, report in about a minute |
 
 Both are paid over x402 v2 and sit under the $1 per-payment cap x402 clients
@@ -17,12 +17,24 @@ ship with.
 ## Per-request check (`/agent/check`)
 
 Before adding or upgrading a crate, or to triage a `Cargo.lock` you already
-have: POST the pinned packages through your x402 client.
+have (private repos included): POST the pinned packages through your x402 client.
 
 ```sh
 POST {{BASE}}/agent/check
 {"packages":[{"name":"borsh","version":"0.9.3"},{"name":"anchor-lang","version":"0.29.0"}]}
 ```
+
+Or send the whole lockfile as a string, same price:
+
+```sh
+POST {{BASE}}/agent/check
+{"lockfile":"<the text of Cargo.lock>"}
+```
+
+Only crates.io packages are checked: workspace and git crates are skipped, so a
+local crate that shares a published crate's name does not borrow its advisories.
+The answer then also carries `lockfile` (`packages` checked, `skipped`).
+Up to 2 MB and 5000 packages.
 
 The paid answer is **HTTP 200**: `checked`, `advisories` (id, affected
 `crates`, `severity`, `summary`, `url`) and `notCheckedCount`. Your payment is

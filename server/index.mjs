@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
-import { runScan, parseGithubUrl, fixMailto, WATCHDOG_LOGO, scanDependencies } from "../bin/scan.mjs";
+import { runScan, parseGithubUrl, fixMailto, WATCHDOG_LOGO, scanDependencies, scanDependenciesBatch, parseCargoLock } from "../bin/scan.mjs";
 import { Store } from "./store.mjs";
 import { Queue } from "./queue.mjs";
 import { sendReport } from "./email.mjs";
@@ -33,6 +33,9 @@ const PRICE_USD = Number(process.env.SCAN_PRICE_USD || 80); // web: a human, a b
 const AGENT_SCAN_PRICE_USD = Number(process.env.AGENT_SCAN_PRICE_USD || 0.5);
 const CHECK_PRICE_USD = Number(process.env.CHECK_PRICE_USD || 0.01);
 const CHECK_MAX_PACKAGES = 100;
+// A whole Cargo.lock instead of a list: one OSV batch call, so the size barely costs us.
+const LOCKFILE_MAX_BYTES = 2_000_000;
+const LOCKFILE_MAX_PACKAGES = 5000;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || null;
 const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN || "*";
 const ALLOW_LOCAL = process.env.ALLOW_LOCAL === "1"; // dev/testing only
@@ -81,10 +84,10 @@ function send(res, code, body, extraHeaders = {}) {
   res.end(payload);
 }
 
-function readBody(req) {
+function readBody(req, max = 1e5) {
   return new Promise((resolve, reject) => {
     let data = "";
-    req.on("data", (c) => { data += c; if (data.length > 1e5) req.destroy(); });
+    req.on("data", (c) => { data += c; if (data.length > max) req.destroy(); });
     req.on("end", () => { try { resolve(data ? JSON.parse(data) : {}); } catch { reject(new Error("bad json")); } });
     req.on("error", reject);
   });
@@ -337,17 +340,36 @@ const CHECK_BAZAAR = bazaarExtension({
   properties: {
     packages: {
       type: "array", minItems: 1, maxItems: CHECK_MAX_PACKAGES,
-      description: "crates.io packages at the exact versions pinned in Cargo.lock",
+      description: "crates.io packages at the exact versions pinned in Cargo.lock. Send this OR lockfile.",
       items: { type: "object", properties: { name: { type: "string" }, version: { type: "string" } }, required: ["name", "version"] },
     },
+    lockfile: {
+      type: "string", maxLength: LOCKFILE_MAX_BYTES,
+      description: `The raw text of a Cargo.lock (up to ${LOCKFILE_MAX_PACKAGES} crates.io packages; workspace and git crates are skipped). Send this OR packages.`,
+    },
   },
-  required: ["packages"],
   outputExample: {
     checked: 2,
     advisories: [{ id: "RUSTSEC-2023-0033", crates: ["borsh 0.9.3"], severity: "MODERATE", summary: "Parsing borsh messages with ZST which are not-copy/clone is unsound", url: "https://rustsec.org/advisories/RUSTSEC-2023-0033.html" }],
     notCheckedCount: 0,
   },
 });
+
+// Either {packages} or {lockfile}. Returns the packages and, for a lockfile, what was read.
+function parseCheckInput(body) {
+  if (body && body.lockfile !== undefined) {
+    if (body.packages !== undefined) throw new Error("send packages OR lockfile, not both");
+    if (typeof body.lockfile !== "string" || !/^\[\[package\]\]/m.test(body.lockfile))
+      throw new Error("lockfile must be the text of a Cargo.lock");
+    if (body.lockfile.length > LOCKFILE_MAX_BYTES) throw new Error(`lockfile is over ${LOCKFILE_MAX_BYTES} bytes`);
+    const all = parseCargoLock(body.lockfile);
+    const packages = parseCargoLock(body.lockfile, { registryOnly: true });
+    if (!packages.length) throw new Error("no crates.io package in this Cargo.lock");
+    if (packages.length > LOCKFILE_MAX_PACKAGES) throw new Error(`lockfile has over ${LOCKFILE_MAX_PACKAGES} crates.io packages`);
+    return { packages, lockfile: { type: "Cargo.lock", packages: packages.length, skipped: all.length - packages.length } };
+  }
+  return { packages: parsePackages(body) };
+}
 
 function parsePackages(body) {
   const pk = body && body.packages;
@@ -377,7 +399,7 @@ function checkRequired(feePayer, error = "PAYMENT-SIGNATURE header is required")
     error,
     resource: {
       url: `${PUBLIC_BASE}/agent/check`,
-      description: `Solana Watchdog advisory check: RustSec/OSV advisories affecting up to ${CHECK_MAX_PACKAGES} crates at their exact pinned versions. Instant, per request.`,
+      description: `Solana Watchdog advisory check: RustSec/OSV advisories affecting the crates of a whole Cargo.lock (or up to ${CHECK_MAX_PACKAGES} listed crates) at their exact pinned versions. Instant, per request.`,
       mimeType: "application/json",
       serviceName: "Solana Watchdog check",
       tags: ["security", "solana", "rust", "advisories", "dependencies"],
@@ -391,8 +413,8 @@ function checkRequired(feePayer, error = "PAYMENT-SIGNATURE header is required")
 const checking = new Set();
 
 async function handleCheck(req, res, body) {
-  let packages;
-  try { packages = parsePackages(body); } catch (e) { return send(res, 400, { error: e.message }); }
+  let packages, lockfile;
+  try { ({ packages, lockfile } = parseCheckInput(body)); } catch (e) { return send(res, 400, { error: e.message }); }
   const feePayer = await facilitator.feePayer(SOLANA_MAINNET);
   const quote = (error) => ({ "payment-required": encodeHeader(checkRequired(feePayer, error)) });
   const header = req.headers["payment-signature"];
@@ -414,7 +436,7 @@ async function handleCheck(req, res, body) {
       return send(res, 402, { error }, quote(error));
     }
     const uniq = [...new Map(packages.map((p) => [`${p.name}@${p.version}`, p])).values()];
-    const deps = await scanDependencies(uniq, globalThis.fetch);
+    const deps = lockfile ? await scanDependenciesBatch(uniq, globalThis.fetch) : await scanDependencies(uniq, globalThis.fetch);
     if (deps.failures === uniq.length) return send(res, 502, { error: "advisory database unreachable, nothing charged; try again" });
     let s;
     try { s = await facilitator.settle(payload, reqs); }
@@ -435,6 +457,7 @@ async function handleCheck(req, res, body) {
       checked: uniq.length - deps.failures,
       advisories: deps.advisories,
       notCheckedCount: deps.failures, // packages the advisory database did not answer for: check them again
+      ...(lockfile ? { lockfile } : {}),
       transaction: s.transaction,
       disclaimer: "Known advisories for these exact versions. Not an audit of the code that uses them.",
     }, { "payment-response": encodeHeader(s) });
@@ -580,7 +603,9 @@ const server = createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/agent/check") {
       if (!MERCHANT_WALLET || !facilitator) return send(res, 503, { error: "payments not configured" });
       if (rateLimited(ip, 120)) return send(res, 429, { error: "rate limited" });
-      return handleCheck(req, res, await readBody(req));
+      let body;
+      try { body = await readBody(req, LOCKFILE_MAX_BYTES + 1e4); } catch { return send(res, 400, { error: "bad json" }); }
+      return handleCheck(req, res, body);
     }
 
     if (req.method === "GET" && url.pathname.startsWith("/agent/jobs/")) {
