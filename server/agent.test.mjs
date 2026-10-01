@@ -5,7 +5,8 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, existsSync } from "node:fs";
+import { createHmac } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -54,7 +55,7 @@ test("underpayment is refused even with the right memo", () => {
 });
 
 // --- end to end ---------------------------------------------------------------
-let rpc, fac, osv, srv, base, currentMemo = null, x402Memo = null, osvDown = false;
+let rpc, fac, osv, srv, base, testDir, currentMemo = null, x402Memo = null, osvDown = false, serdeVuln = false;
 const osvCalls = [];
 // What the fake facilitator was asked to settle against, per call.
 const facCalls = [];
@@ -86,7 +87,7 @@ before(async () => {
       facCalls.push({ path: req.url, body });
       const tx = body.paymentPayload.payload.transaction;
       if (req.url === "/verify") return res.end(JSON.stringify(tx === "BAD" ? { isValid: false, invalidReason: "invalid_exact_svm_payload_transaction" } : { isValid: true, payer: "Payer111" }));
-      const settled = { GOOD: SIG_X402, CHK1: "6".repeat(88), CHK2: "7".repeat(88), CHK3: "8".repeat(88) }[tx] || SIG_X402;
+      const settled = { GOOD: SIG_X402, CHK1: "6".repeat(88), CHK2: "7".repeat(88), CHK3: "8".repeat(88), WATCH1: "9".repeat(88) }[tx] || SIG_X402;
       if (req.url === "/settle") return res.end(JSON.stringify(tx === "NOSETTLE"
         ? { success: false, errorReason: "insufficient_funds", transaction: "", network: SOLANA_MAINNET }
         : { success: true, transaction: settled, network: SOLANA_MAINNET, payer: "Payer111" }));
@@ -104,12 +105,15 @@ before(async () => {
         const { queries } = JSON.parse(b);
         osvCalls.push({ batch: queries.length });
         res.writeHead(200, { "content-type": "application/json" });
-        return res.end(JSON.stringify({ results: queries.map((q) => (q.package.name === "borsh" ? { vulns: [{ id: "RUSTSEC-2023-0033" }] } : {})) }));
+        return res.end(JSON.stringify({ results: queries.map((q) => (q.package.name === "borsh" ? { vulns: [{ id: "RUSTSEC-2023-0033" }] }
+          : q.package.name === "serde" && serdeVuln ? { vulns: [{ id: "RUSTSEC-2099-0001" }] } : {})) }));
       }
       if (req.url.startsWith("/v1/vulns/")) {
         osvCalls.push({ vuln: req.url });
         res.writeHead(200, { "content-type": "application/json" });
-        return res.end(JSON.stringify({ id: "RUSTSEC-2023-0033", aliases: ["GHSA-fjx5-qpf4-xjf2"], summary: "borsh ZST unsound" }));
+        return res.end(JSON.stringify(req.url.endsWith("RUSTSEC-2099-0001")
+          ? { id: "RUSTSEC-2099-0001", summary: "serde test advisory", database_specific: { severity: "HIGH" } }
+          : { id: "RUSTSEC-2023-0033", aliases: ["GHSA-fjx5-qpf4-xjf2"], summary: "borsh ZST unsound" }));
       }
       const q = JSON.parse(b);
       osvCalls.push(q);
@@ -119,7 +123,7 @@ before(async () => {
   });
   await new Promise((r) => osv.listen(0, r));
   base = `http://127.0.0.1:${port}`;
-  const dir = mkdtempSync(join(tmpdir(), "ssw-agent-test-"));
+  const dir = testDir = mkdtempSync(join(tmpdir(), "ssw-agent-test-"));
   srv = spawn(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), "index.mjs")], {
     env: {
       ...process.env,
@@ -134,6 +138,9 @@ before(async () => {
       SCAN_PRICE_USD: "69",
       PUBLIC_BASE_URL: base,
       RESEND_API_KEY: "",
+      WATCH_ALLOW_PRIVATE_WEBHOOKS: "1",
+      WATCH_TICK_MS: "100",
+      WATCH_INTERVAL_MS: "0",
     },
     stdio: "ignore",
   });
@@ -389,3 +396,66 @@ test("/agent/program: priced apart, a wrong address costs nothing", async () => 
   assert.match((await r.json()).error, /Nothing charged/);
   assert.deepEqual(facCalls.map((c) => c.path), ["/verify"]);
 });
+
+test("/agent/watch: created only once paid, signed webhook on a new advisory, readable and cancellable", async () => {
+  const hooks = [];
+  const hook = createServer((req, res) => { let b = ""; req.on("data", (c) => (b += c)); req.on("end", () => { hooks.push({ headers: req.headers, body: b }); res.writeHead(204); res.end(); }); });
+  await new Promise((r) => hook.listen(0, r));
+  const webhook = `http://127.0.0.1:${hook.address().port}/hook`;
+  const reg = 'source = "registry+https://github.com/rust-lang/crates.io-index"';
+  const lockfile = ["[[package]]", 'name = "borsh"', 'version = "0.9.3"', reg, "", "[[package]]", 'name = "serde"', 'version = "1.0.200"', reg, ""].join("\n");
+  const call = (body, payment) => fetch(`${base}/agent/watch`, {
+    method: "POST", headers: { "content-type": "application/json", ...(payment ? { "payment-signature": payment } : {}) }, body: JSON.stringify(body),
+  });
+  const watchesOnDisk = () => (existsSync(join(testDir, "watches.json")) ? Object.keys(JSON.parse(readFileSync(join(testDir, "watches.json"), "utf8"))).length : 0);
+  try {
+    assert.equal((await call({ lockfile })).status, 400); // no webhook
+    assert.equal((await call({ lockfile, webhook: "ftp://x" })).status, 400);
+    const q = await call({ lockfile, webhook });
+    assert.equal(q.status, 402);
+    const required = decodeHeader(q.headers.get("payment-required"));
+    const [req] = required.accepts;
+    assert.equal(req.amount, "900000"); // $0.90 for the period
+    assert.equal(required.resource.url, `${base}/agent/watch`);
+    assert.ok(required.resource.serviceName.length <= 32);
+    const pay = (transaction) => encodeHeader({ x402Version: 2, resource: required.resource, accepted: req, payload: { transaction }, extensions: required.extensions });
+
+    // Settlement fails: no watch exists.
+    assert.equal((await call({ lockfile, webhook }, pay("NOSETTLE"))).status, 402);
+    assert.equal(watchesOnDisk(), 0);
+
+    const ok = await call({ lockfile, webhook }, pay("WATCH1"));
+    assert.equal(ok.status, 200);
+    const sub = await ok.json();
+    assert.equal(watchesOnDisk(), 1);
+    assert.ok(sub.watchId && sub.secret && sub.accessToken && sub.expiresAt);
+    assert.deepEqual(sub.baseline.advisories.map((a) => a.id), ["RUSTSEC-2023-0033"]);
+
+    // Nothing new: no page. Then an advisory appears for serde.
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal(hooks.length, 0);
+    serdeVuln = true;
+    for (let i = 0; i < 50 && !hooks.length; i++) await new Promise((r) => setTimeout(r, 100));
+    assert.equal(hooks.length, 1);
+    const { headers, body } = hooks[0];
+    assert.equal(headers["x-watchdog-signature"], "sha256=" + createHmac("sha256", sub.secret).update(body).digest("hex"));
+    const ev = JSON.parse(body);
+    assert.equal(ev.watchId, sub.watchId);
+    assert.deepEqual(ev.events.map((e) => [e.type, e.advisory.id]), [["new-advisory", "RUSTSEC-2099-0001"]]);
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal(hooks.length, 1); // paged once
+
+    const auth = { authorization: `Bearer ${sub.accessToken}` };
+    assert.equal((await fetch(sub.statusUrl)).status, 404);
+    const view = await (await fetch(sub.statusUrl, { headers: auth })).json();
+    assert.equal(view.status, "active");
+    assert.equal(view.events[0].delivered, true);
+    assert.equal(view.secret, undefined);
+    const del = await fetch(sub.statusUrl, { method: "DELETE", headers: auth });
+    assert.equal((await del.json()).status, "cancelled");
+  } finally {
+    serdeVuln = false;
+    hook.close();
+  }
+});
+
