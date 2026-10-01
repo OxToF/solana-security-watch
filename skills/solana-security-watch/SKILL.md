@@ -53,6 +53,7 @@ Load only the file you need for the task at hand:
 | [`vuln-classes.md`](vuln-classes.md) | Confronting code against bug classes — the Anchor/SPL checklist with detection patterns. |
 | [`case-studies.md`](case-studies.md) | You want worked examples of real findings (anonymised) to calibrate severity and format. |
 | [`poc-harness.md`](poc-harness.md) | You want runnable proof (not just a grep pattern) that a class is real and that the fix works — [`poc/`](../../poc/) ships EXPLOIT/DEFENSE/POSITIVE CONTROL test suites. |
+| [`solidity-to-anchor.md`](solidity-to-anchor.md) | You are porting a Solidity contract to Anchor, or reviewing such a port: the EVM habits that become holes on Solana, the Anchor pattern for each, and a port checklist. |
 | [`../../commands/security-watch.md`](../../commands/security-watch.md) | You want the mechanical scan: deps + grep + advisory search → report. |
 | [`../../agents/security-auditor.md`](../../agents/security-auditor.md) | You want a dedicated read-only subagent to run the full audit workflow autonomously. |
 
