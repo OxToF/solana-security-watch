@@ -365,3 +365,27 @@ test("/agent/check takes a whole Cargo.lock, crates.io packages only, in one bat
   assert.deepEqual(facCalls.map((c) => c.path), ["/verify"]);
   osvDown = false;
 });
+
+test("/agent/program: priced apart, a wrong address costs nothing", async () => {
+  const call = (body, payment) => fetch(`${base}/agent/program`, {
+    method: "POST", headers: { "content-type": "application/json", ...(payment ? { "payment-signature": payment } : {}) }, body: JSON.stringify(body),
+  });
+  assert.equal((await call({ programId: "not-an-address" })).status, 400);
+  const q = await call({ programId: MERCHANT });
+  assert.equal(q.status, 402);
+  const required = decodeHeader(q.headers.get("payment-required"));
+  const [req] = required.accepts;
+  assert.equal(req.amount, "50000"); // $0.05
+  assert.equal(req.payTo, MERCHANT);
+  assert.equal(required.resource.url, `${base}/agent/program`);
+  assert.ok(required.resource.serviceName.length <= 32);
+  assert.deepEqual(required.extensions.bazaar.schema.properties.input.properties.body.required, ["programId"]);
+
+  // The fake RPC knows no such account: verified, looked up, refused, never settled.
+  facCalls.length = 0;
+  const pay = encodeHeader({ x402Version: 2, resource: required.resource, accepted: req, payload: { transaction: "PRG1" }, extensions: required.extensions });
+  const r = await call({ programId: MERCHANT }, pay);
+  assert.equal(r.status, 404);
+  assert.match((await r.json()).error, /Nothing charged/);
+  assert.deepEqual(facCalls.map((c) => c.path), ["/verify"]);
+});

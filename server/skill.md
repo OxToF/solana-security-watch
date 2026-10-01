@@ -8,11 +8,38 @@ Base URL: `{{BASE}}`
 
 | Request | Price | Answer |
 |---|---|---|
+| `POST /agent/program` | **{{PROGRAM_PRICE}} USDC** | instant: who can change a deployed program, before you sign for it |
 | `POST /agent/check` | **{{CHECK_PRICE}} USDC** | instant: advisories for a whole `Cargo.lock`, or up to {{CHECK_MAX}} listed crates, at exact versions |
 | `POST /agent/scan` | **{{PRICE}} USDC** | a job: full scan of a public GitHub repo, report in about a minute |
 
-Both are paid over x402 v2 and sit under the $1 per-payment cap x402 clients
+All are paid over x402 v2 and sit under the $1 per-payment cap x402 clients
 ship with.
+
+## Program check (`/agent/program`)
+
+Before you sign a transaction for a program, or hold funds in it: who can
+replace its code?
+
+```sh
+POST {{BASE}}/agent/program
+{"programId":"whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc"}
+```
+
+The paid answer is **HTTP 200** with:
+
+- `authority.kind`: `none` (immutable), `single-key` (one private key can swap
+  the code at any time), `squads-v4` (with `threshold`, `members`,
+  `timeLockSeconds`; the vault is re-derived from the multisig, so this is
+  proved, not guessed), `squads-v3`, `spl-governance`, or `program-controlled`
+  when the controlling program could not be identified.
+- `lastDeploy` (slot and date), `verifiedBuild` (OtterSec), `securityTxt` (as
+  embedded in the binary), `anchorIdl` (an IDL is published on-chain).
+- `flags`, most severe first: `single-key-authority` and `multisig-1-of-n` are
+  `high`; `recent-upgrade` (under 7 days), `no-verified-build` and
+  `build-mismatch` are `medium`; `no-security-txt` is `low`.
+
+An address that holds no program is answered 404 / 422 and **not charged**.
+It says who controls the program, not whether its code is safe.
 
 ## Per-request check (`/agent/check`)
 
