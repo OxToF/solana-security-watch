@@ -9,14 +9,66 @@ import {
 } from "@solana/spl-token";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "https://solana-security-watchdog-scan.fly.dev";
+const EVM_BASE = import.meta.env.VITE_EVM_API_BASE || "https://evm-watchdog-scan.fly.dev";
 const WALLET = import.meta.env.VITE_MERCHANT_WALLET || "7yMnWMrxzZ3YCtWXRsZEhAFwexHoJzBJy8RgN7Lhvy1P";
 const AMOUNT = Number(import.meta.env.VITE_AMOUNT_USDC || 69);
-const CONTACT = import.meta.env.VITE_CONTACT || "solanawatchdog@proton.me";
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const MEMO_PROGRAM = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
 
 const isRepo = (s) => /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/.test(s);
 const isEmail = (s) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s);
+
+const MCP_CMD = "claude mcp add watchdog -e WATCHDOG_SOLANA_PRIVATE_KEY=<base58 key> -e WATCHDOG_EVM_PRIVATE_KEY=<hex key> -- npx -y watchdog-mcp";
+const MCP_JSON = `{
+  "mcpServers": {
+    "watchdog": {
+      "command": "npx",
+      "args": ["-y", "watchdog-mcp"],
+      "env": {
+        "WATCHDOG_SOLANA_PRIVATE_KEY": "…",
+        "WATCHDOG_EVM_PRIVATE_KEY": "…",
+        "WATCHDOG_BUDGET_USD": "5"
+      }
+    }
+  }
+}`;
+const CURL = `curl -i -X POST ${API_BASE}/agent/program \\
+  -H 'content-type: application/json' \\
+  -d '{"programId":"whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc"}'
+
+HTTP/2 402
+payment-required: eyJ4NDAyVmVyc2lvbiI6Mi…   # x402 v2 terms: $0.05 USDC on Solana`;
+const SAMPLE = `{
+  "programId": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+  "upgradeable": true,
+  "authority": {
+    "kind": "squads-v4",
+    "threshold": 5, "members": 13, "timeLockSeconds": 86400,
+    "text": "Squads v4 multisig: 5 of 13 members must approve an upgrade, then a 24 h time lock.",
+    "proof": "vault PDA re-derived from the multisig"
+  },
+  "lastDeploy": { "at": "2026-08-19T01:28:54Z" },
+  "securityTxt": { "name": "Orca Whirlpool program", "…": "…" },
+  "flags": [{ "severity": "medium", "id": "build-mismatch", "text": "…" }]
+}`;
+
+const MOMENTS = [
+  { when: "Before signing", who: "Trading and DeFi agents", what: "Who can replace this program or contract tomorrow? Single key, multisig threshold and time lock, or immutable.", price: "$0.05", tool: "solana_program_authority · evm_contract_control" },
+  { when: "Before adding a dependency", who: "Coding agents", what: "Known advisories for a whole Cargo.lock, package-lock.json or yarn.lock, at exact pinned versions.", price: "$0.01", tool: "dependency_advisories" },
+  { when: "Before merging", who: "Agents that ship code", what: "A full scan of a public repo: on-chain vs tooling advisories, build hygiene, known bug-class leads with file:line.", price: "$0.50", tool: "scan_repo" },
+  { when: "All month", who: "Treasury and portfolio agents", what: "Signed webhook the moment a program changes hands or code, a Safe weakens, or a new advisory hits your lockfile.", price: "$0.90 / 30 days", tool: "watch_create" },
+];
+
+const ENDPOINTS = [
+  { svc: "Solana", path: "/agent/program", price: "0.05", net: "Solana", what: "Upgrade authority (single key, Squads v4 proved, Squads v3, DAO, immutable), last deploy, verified build, security.txt" },
+  { svc: "Solana", path: "/agent/check", price: "0.01", net: "Solana", what: "RustSec / OSV advisories for a Cargo.lock or up to 100 crates" },
+  { svc: "Solana", path: "/agent/scan", price: "0.50", net: "Solana", what: "Full scan of a public Rust / Anchor repo" },
+  { svc: "Solana", path: "/agent/watch", price: "0.90", net: "Solana", what: "30 days of hourly checks of a program or a Cargo.lock, signed webhooks" },
+  { svc: "EVM", path: "/agent/contract", price: "0.05", net: "Base", what: "Proxy kind, live implementation, upgrade controller and owner (key, Safe, timelock), Sourcify. Base and Robinhood Chain" },
+  { svc: "EVM", path: "/agent/check", price: "0.01", net: "Base", what: "GitHub / OSV advisories for a package-lock.json, yarn.lock or up to 100 packages" },
+  { svc: "EVM", path: "/agent/scan", price: "0.50", net: "Base", what: "Full scan of a public Solidity repo (Foundry or Hardhat)" },
+  { svc: "EVM", path: "/agent/watch", price: "0.90", net: "Base", what: "30 days of hourly checks of a contract or an npm lockfile, signed webhooks" },
+];
 
 function Logo({ size = 34 }) {
   return (
@@ -33,6 +85,20 @@ function Logo({ size = 34 }) {
       <path d="M32 40.5 Q28 44 25 42" stroke="#20202f" strokeWidth="1.4" fill="none" strokeLinecap="round" /><path d="M32 40.5 Q36 44 39 42" stroke="#20202f" strokeWidth="1.4" fill="none" strokeLinecap="round" />
       <circle cx="45" cy="45" r="7.5" fill="rgba(255,255,255,.18)" stroke="#20202f" strokeWidth="2.4" /><path d="M50.4 50.4 L57 57" stroke="#20202f" strokeWidth="3.4" strokeLinecap="round" />
     </svg>
+  );
+}
+
+function Code({ text, label }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); }
+    catch { setCopied(false); }
+  }
+  return (
+    <div className="code">
+      <div className="code-head"><span>{label}</span><button type="button" className="copy" onClick={copy}>{copied ? "Copied" : "Copy"}</button></div>
+      <pre>{text}</pre>
+    </div>
   );
 }
 
@@ -85,7 +151,7 @@ export default function App() {
       });
       if (!v.ok) {
         const e = await v.json().catch(() => ({}));
-        throw new Error(`Payment sent but verification failed: ${e.error || "unknown"}. Email us the signature: ${signature}`);
+        throw new Error(`Payment sent but verification failed: ${e.error || "unknown"}. Keep this signature: ${signature}`);
       }
       setMsg({ kind: "ok", text: `Paid. Your report will arrive by email shortly. Signature: ${signature}` });
       setRepo(""); setEmail("");
@@ -101,83 +167,112 @@ export default function App() {
       <header>
         <div className="brand"><Logo size={34} /><span className="bt">Solana <span className="g">Watchdog</span></span></div>
         <nav className="nav">
-          <a href="#offers">Offers</a>
-          <a href="#proof">Proof</a>
-          <a href="https://github.com/OxToF/solana-security-watch">GitHub</a>
+          <a href="#mcp">MCP</a>
+          <a href="#endpoints">Endpoints</a>
+          <a href="#browser">Scan in browser</a>
+          <a href="https://github.com/OxToF/watchdog-mcp">GitHub</a>
         </nav>
       </header>
 
       <div className="hero">
-        <h1>Harden your Solana program <em>before</em> someone else does</h1>
-        <p className="sub">Paste your public repo. We check your dependencies against RustSec and OSV advisories on your exact pinned versions, and your code against 18 Solana and Anchor vulnerability classes. Dated report, severity, file and line.</p>
+        <div className="eyebrow">Security checks paid by agents, per call, over x402</div>
+        <h1>Your agent checks the code <em>before</em> it signs</h1>
+        <p className="sub">Who can replace this program? Does this lockfile carry a known advisory? Your agent asks Watchdog at the moment it decides, pays a few cents in USDC on its own over x402, and gets the answer in the same request. No account, no API key.</p>
+        <div className="cta">
+          <a className="btn" href="#mcp">Install the MCP server</a>
+          <a className="btn ghost" href={`${API_BASE}/skill.md`}>Agent manual</a>
+        </div>
+        <div className="badges">
+          <span className="badge">x402 v2</span>
+          <span className="badge">Listed in the PayAI Bazaar</span>
+          <a className="badge" href={`${API_BASE}/.well-known/agent-registration.json`}>ERC-8004 agent #96652</a>
+          <a className="badge" href={`${EVM_BASE}/.well-known/agent-registration.json`}>ERC-8004 agent #96653</a>
+          <a className="badge" href="https://registry.modelcontextprotocol.io/v0/servers?search=watchdog-mcp">MCP Registry</a>
+        </div>
+      </div>
 
+      <section id="moments">
+        <h2>Four moments an agent pays for</h2>
+        <div className="moments">
+          {MOMENTS.map((m) => (
+            <div className="moment" key={m.when}>
+              <div className="when">{m.when}</div>
+              <h3>{m.who}</h3>
+              <p>{m.what}</p>
+              <div className="buy"><b>{m.price}</b> <code>{m.tool}</code></div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section id="mcp">
+        <h2>One MCP server, both chains</h2>
+        <p className="lead">The <a href="https://github.com/OxToF/watchdog-mcp">watchdog-mcp</a> server gives Claude, Cursor or any MCP client eight tools that pay for themselves from a wallet you provide. Use a dedicated wallet holding a little USDC: no SOL or ETH is needed, the facilitator pays the network fee.</p>
+        <Code label="Claude Code" text={MCP_CMD} />
+        <Code label="Claude Desktop, Cursor and other clients" text={MCP_JSON} />
+        <ul className="checks">
+          <li>Pays only the Watchdog merchant wallet, in USDC, on the expected network. A server asking to be paid elsewhere is refused.</li>
+          <li>A per-call cap and a session budget you set, enforced before anything is signed.</li>
+          <li>Without a key, a tool returns the price instead of paying.</li>
+        </ul>
+      </section>
+
+      <section id="endpoints">
+        <h2>Or call the x402 endpoints directly</h2>
+        <p className="lead">Every endpoint answers <code>402</code> with x402 v2 terms in the <code>PAYMENT-REQUIRED</code> header. Any x402 client pays and retries; under $1, <code>@x402/fetch</code> does it with its default settings. An address that holds no program or contract is not charged, and a check is settled only once its answer exists.</p>
+        <div className="table">
+          <table>
+            <thead><tr><th>Endpoint</th><th>USDC</th><th>Paid on</th><th>Answer</th></tr></thead>
+            <tbody>
+              {ENDPOINTS.map((e) => (
+                <tr key={e.svc + e.path}>
+                  <td className="mono"><span className={`svc ${e.svc.toLowerCase()}`}>{e.svc}</span> POST {e.path}</td>
+                  <td className="mono">{e.price}</td>
+                  <td>{e.net}</td>
+                  <td>{e.what}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="small">Base URLs: <code>{API_BASE}</code> and <code>{EVM_BASE}</code>. Manuals for agents: <a href={`${API_BASE}/skill.md`}>Solana</a>, <a href={`${EVM_BASE}/skill.md`}>EVM</a>.</p>
+        <div className="two">
+          <Code label="The first call returns the terms" text={CURL} />
+          <Code label="What the agent gets for $0.05 (Orca Whirlpools)" text={SAMPLE} />
+        </div>
+      </section>
+
+      <section id="browser">
+        <h2>Prefer a browser?</h2>
+        <p className="lead">Run the full scan of a public Rust / Anchor repo yourself. Connect a Solana wallet, pay in USDC, and receive a branded report by email.</p>
         <div className="scanbox">
           <div className="connect-row"><WalletMultiButton /></div>
           <input className="fld" type="url" placeholder="https://github.com/your-org/your-repo" value={repo} onChange={(e) => setRepo(e.target.value)} />
           <input className="fld" type="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
           <button className="btn pay" onClick={pay} disabled={busy}>{busy ? "Working..." : `Pay ${AMOUNT} USDC & scan`}</button>
-          <div className="price">On-demand scan, <b>{AMOUNT} USDC</b> on Solana. Public repo. Connect any Solana wallet.</div>
+          <div className="price">Scan and emailed report, <b>{AMOUNT} USDC</b> on Solana. Public repo only.</div>
           {msg && <div className={`msg ${msg.kind}`}>{msg.text}</div>}
-          <div className="hint">No install. We only clone public code, never your secrets.</div>
-        </div>
-      </div>
-
-      <section id="how">
-        <h2>How it works</h2>
-        <div className="steps">
-          <div className="step"><div className="n">01</div><h3>Connect + paste the repo</h3><p>Connect a Solana wallet and paste a public GitHub URL. Nothing to install.</p></div>
-          <div className="step"><div className="n">02</div><h3>You pay in USDC</h3><p>One click, one signature. No card, no account.</p></div>
-          <div className="step"><div className="n">03</div><h3>You get the report</h3><p>A clear, dated document with severity, location, and fix pointers, by email.</p></div>
-        </div>
-      </section>
-
-      <section id="offers">
-        <h2>Two ways to work together</h2>
-        <div className="offers">
-          <div className="offer mark">
-            <div className="tag">ON DEMAND</div>
-            <h3>The scan</h3>
-            <div className="p">{AMOUNT} USDC <small>per scan</small></div>
-            <ul>
-              <li>RustSec and OSV advisories on your exact versions</li>
-              <li>Build hygiene (overflow-checks, Anchor version)</li>
-              <li>Code leads mapped to the 18 known classes</li>
-              <li>Dated report, severity and file:line</li>
-            </ul>
-            <a className="btn" href="#top" onClick={(e) => { e.preventDefault(); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Run a scan</a>
-          </div>
-          <div className="offer">
-            <div className="tag">CONTINUOUS</div>
-            <h3>The watch</h3>
-            <div className="p">custom <small>per month</small></div>
-            <ul>
-              <li>Daily monitoring of your dependency tree</li>
-              <li>Human pass on every newly merged commit</li>
-              <li>Private report and a dedicated alert channel</li>
-              <li>Alerted the day a flaw lands, not later in a post mortem</li>
-            </ul>
-            <a className="btn ghost" href={`mailto:${CONTACT}?subject=${encodeURIComponent("Continuous Solana security watch")}`}>Talk about the watch</a>
-          </div>
+          <div className="hint">We only clone public code, never your secrets.</div>
         </div>
       </section>
 
       <section>
         <div className="scope">
-          <strong>What this is not.</strong> A full audit is not replaceable. This service detects known vulnerability classes and dependency issues, it does not certify the absence of bugs. It is a first line of defense, not a guarantee.
+          <strong>What this is not.</strong> These are checks, not an audit. Watchdog reports who controls a program, known advisories and known vulnerability classes; it does not certify the absence of bugs.
         </div>
       </section>
 
       <section id="proof" className="proof">
-        <h2>Proof before promise</h2>
-        <p>Every class we cover is backed by an executable proof, not a paragraph. Everything is public, so you can verify before you pay.</p>
+        <h2>Verify before you pay</h2>
         <ul>
-          <li><a href="https://github.com/OxToF/solana-security-watch/blob/main/examples/sample-scan-report.html">See a sample scan report</a></li>
-          <li><a href="https://github.com/OxToF/solana-security-watch/blob/main/examples/watch-orca-whirlpools-2026-09-01.md">See a watch pass on a real protocol</a></li>
-          <li><a href="https://github.com/OxToF/solana-security-watch">The open source toolkit (5 executable proofs, 18 classes)</a></li>
+          <li><a href="https://github.com/OxToF/watchdog-mcp">watchdog-mcp</a>: the MCP server, open source, with its payment guards tested</li>
+          <li><a href="https://github.com/OxToF/solana-security-watch">solana-security-watch</a>: the scanner and 5 executable proofs of known Solana bug classes</li>
+          <li><a href="https://github.com/OxToF/solana-security-watch/blob/main/skills/solana-security-watch/solidity-to-anchor.md">Porting Solidity to Anchor: the traps</a></li>
+          <li><a href="https://github.com/OxToF/solana-security-watch/blob/main/examples/sample-scan-report.html">A sample scan report</a></li>
         </ul>
       </section>
 
-      <footer>Solana Security Watch. Open source under the MIT license. The scan is a hardening aid, not a certified audit.</footer>
+      <footer>Solana Watchdog and EVM Watchdog. Open source under the MIT license. Checks, not a certified audit.</footer>
     </div>
   );
 }
