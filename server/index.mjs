@@ -727,9 +727,11 @@ const SKILL_MD = existsSync(join(__dirname, "skill.md")) ? readFileSync(join(__d
 function rpcHost(u) { try { return new URL(u).host; } catch { return "(unparseable RPC URL)"; } }
 
 const server = createServer(async (req, res) => {
-  const ip = req.socket.remoteAddress || "?";
+  // Behind the Fly proxy the socket peer is the proxy, the same for every caller:
+  // keyed on it, the rate limits were one budget shared by everyone.
+  const ip = req.headers["fly-client-ip"] || req.socket.remoteAddress || "?";
   const url = new URL(req.url, `http://localhost:${PORT}`);
-  traffic.watch(req, res, req.headers["fly-client-ip"] || req.socket.remoteAddress || "?");
+  traffic.watch(req, res, ip);
   if (req.method === "OPTIONS") return send(res, 204, "");
 
   try {

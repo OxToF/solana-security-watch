@@ -480,3 +480,10 @@ test("traffic log: who called and where they stopped, with no id, token or IP in
   assert.doesNotMatch(raw, /127\.0\.0\.1|::1/);
   assert.doesNotMatch(raw, /Bearer/);
 });
+
+test("rate limits are per client behind the proxy, not one budget for everyone", async () => {
+  const as = (who) => fetch(`${base}/agent/scan`, { method: "POST", headers: { "content-type": "application/json", "fly-client-ip": who }, body: "{}" });
+  for (let i = 0; i < 20; i++) assert.notEqual((await as("203.0.113.1")).status, 429);
+  assert.equal((await as("203.0.113.1")).status, 429);
+  assert.notEqual((await as("203.0.113.2")).status, 429, "another caller keeps its own budget");
+});
