@@ -487,3 +487,54 @@ test("rate limits are per client behind the proxy, not one budget for everyone",
   assert.equal((await as("203.0.113.1")).status, 429);
   assert.notEqual((await as("203.0.113.2")).status, 429, "another caller keeps its own budget");
 });
+
+test("discovery: probes get the 402 terms, never a 404 or 400, and nothing is created or settled", async () => {
+  const jobsBefore = existsSync(join(testDir, "jobs.json")) ? Object.keys(JSON.parse(readFileSync(join(testDir, "jobs.json"), "utf8"))).length : 0;
+  // Its own client addresses: the rate limit buckets are per client, all routes together.
+  const h = { "content-type": "application/json", "fly-client-ip": "198.51.100.7" };
+  const prices = { "/agent/program": "50000", "/agent/check": "10000", "/agent/scan": "500000", "/agent/watch": "900000" };
+  for (const [path, amount] of Object.entries(prices)) {
+    for (const [method, body] of [["GET"], ["HEAD"], ["POST", "{}"], ["POST", ""]]) {
+      const r = await fetch(`${base}${path}`, { method, headers: h, body });
+      assert.equal(r.status, 402, `${method} ${path} ${JSON.stringify(body)}`);
+      const req = decodeHeader(r.headers.get("payment-required"));
+      assert.equal(req.x402Version, 2);
+      assert.equal(req.accepts[0].amount, amount, `${method} ${path}`);
+      assert.equal(req.accepts[0].payTo, MERCHANT);
+      assert.equal(req.accepts[0].extra.memo, undefined, "a probe never gets a payable job memo");
+      assert.ok(req.extensions.bazaar.info.input.body, "the example body is in the terms");
+      if (method !== "HEAD") assert.match((await r.json()).howTo, new RegExp(`POST ${base}${path}`));
+    }
+  }
+  const jobsAfter = existsSync(join(testDir, "jobs.json")) ? Object.keys(JSON.parse(readFileSync(join(testDir, "jobs.json"), "utf8"))).length : 0;
+  assert.equal(jobsAfter, jobsBefore, "a probe creates no job");
+
+  // A malformed body is still a 400: only an empty one is a probe.
+  assert.equal((await fetch(`${base}/agent/program`, { method: "POST", headers: h, body: JSON.stringify({ programId: "nope" }) })).status, 400);
+
+  // Paying a probe's terms without a real body never reaches /settle.
+  const settlesBefore = facCalls.filter((c) => c.path === "/settle").length;
+  const accepted = decodeHeader((await fetch(`${base}/agent/scan`, { method: "GET", headers: h })).headers.get("payment-required")).accepts[0];
+  const sig = encodeHeader({ x402Version: 2, accepted, payload: { transaction: "GOOD" } });
+  for (const path of Object.keys(prices)) {
+    const r = await fetch(`${base}${path}`, { method: "POST", headers: { ...h, "fly-client-ip": "198.51.100.8", "payment-signature": sig }, body: "{}" });
+    assert.ok([400, 402].includes(r.status), `${path} answered ${r.status}`);
+  }
+  assert.equal(facCalls.filter((c) => c.path === "/settle").length, settlesBefore, "nothing settled");
+});
+
+test("discovery documents: /.well-known/x402, /openapi.json, /llms.txt, /robots.txt", async () => {
+  const d = await (await fetch(`${base}/.well-known/x402`)).json();
+  assert.equal(d.x402Version, 2);
+  assert.deepEqual(d.resources.map((u) => u.replace(base, "")), ["/agent/program", "/agent/check", "/agent/scan", "/agent/watch"]);
+  assert.deepEqual(d.services.map((s) => s.priceUsdc), [0.05, 0.01, 0.5, 0.9]);
+  assert.ok(d.services.every((s) => s.payTo === MERCHANT && s.network === SOLANA_MAINNET && s.input.example));
+  const o = await (await fetch(`${base}/openapi.json`)).json();
+  assert.equal(o.openapi, "3.1.0");
+  assert.deepEqual(Object.keys(o.paths), ["/agent/program", "/agent/check", "/agent/scan", "/agent/watch"]);
+  assert.equal(o.paths["/agent/check"].post["x-x402"].priceUsdc, 0.01);
+  const l = await fetch(`${base}/llms.txt`);
+  assert.match(l.headers.get("content-type"), /text\/plain/);
+  assert.match(await l.text(), /POST .*\/agent\/program, \$0\.05 USDC/);
+  assert.match(await (await fetch(`${base}/robots.txt`)).text(), /Disallow: \/admin\//);
+});
