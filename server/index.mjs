@@ -721,6 +721,126 @@ function agentRegistration() {
   };
 }
 
+// --- discovery -------------------------------------------------------------------------
+// Crawlers and x402 indexers probe an endpoint with an empty POST, a GET or a HEAD and
+// expect a 402 with the terms. They used to get 400 or 404 and never saw a price. Every
+// such probe now gets the 402 an empty request deserves: the same requirements and price
+// as a real quote, built from the same constants. Nothing is ever settled from it: a
+// payment resent without a valid body is refused before the facilitator is asked to settle.
+
+// The scan's payable quote carries a per-job memo, so a probe gets the price without one.
+function scanDiscoveryRequired(feePayer, error = "POST a JSON body {repo}: the payable quote carries a per-job memo") {
+  return { ...x402Required({ priceUsd: AGENT_SCAN_PRICE_USD }, feePayer, error), accepts: [{ ...checkRequirements(feePayer), amount: String(Math.round(AGENT_SCAN_PRICE_USD * 1e6)) }] };
+}
+
+const CATALOG = [
+  { path: "/agent/program", name: "program", priceUsd: PROGRAM_PRICE_USD, required: programRequired, bazaar: PROGRAM_BAZAAR },
+  { path: "/agent/check", name: "check", priceUsd: CHECK_PRICE_USD, required: checkRequired, bazaar: CHECK_BAZAAR },
+  { path: "/agent/scan", name: "scan", priceUsd: AGENT_SCAN_PRICE_USD, required: scanDiscoveryRequired, bazaar: SCAN_BAZAAR },
+  { path: "/agent/watch", name: "watch", priceUsd: WATCH_PRICE_USD, required: watchRequired, bazaar: WATCH_BAZAAR },
+];
+const catalogEntry = (path) => CATALOG.find((e) => e.path === path);
+const describe = (e) => e.required("", "").resource;
+const exampleOf = (e) => e.bazaar.info.input.body;
+const bodySchemaOf = (e) => e.bazaar.schema.properties.input.properties.body;
+const isEmptyBody = (b) => !b || (typeof b === "object" && !Array.isArray(b) && Object.keys(b).length === 0);
+
+async function discoveryQuote(res, e) {
+  const url = `${PUBLIC_BASE}${e.path}`;
+  const error = "send a JSON body; its schema is in extensions.bazaar";
+  let headers = {};
+  try { headers = { "payment-required": encodeHeader(e.required(await facilitator.feePayer(SOLANA_MAINNET), error)) }; }
+  catch (err) { console.error(`[x402] discovery quote without header: ${err.message}`); }
+  return send(res, 402, {
+    error: "payment_required",
+    priceUsdc: e.priceUsd,
+    network: SOLANA_MAINNET,
+    asset: USDC_MINT,
+    payTo: MERCHANT_WALLET,
+    description: describe(e).description,
+    howTo: `POST ${url} with a JSON body like ${JSON.stringify(exampleOf(e))}. The 402 answer carries x402 v2 terms in the PAYMENT-REQUIRED header; resend the same request with PAYMENT-SIGNATURE.`,
+    exampleBody: exampleOf(e),
+    manual: `${PUBLIC_BASE}/skill.md`,
+  }, headers);
+}
+
+function x402Discovery() {
+  return {
+    x402Version: 2,
+    provider: { name: "Solana Watchdog", origin: PUBLIC_BASE, website: LANDING_URL, contact: CONTACT },
+    status: "live",
+    resources: CATALOG.map((e) => `${PUBLIC_BASE}${e.path}`),
+    services: CATALOG.map((e) => ({
+      name: e.name,
+      endpoint: `${PUBLIC_BASE}${e.path}`,
+      method: "POST",
+      description: describe(e).description,
+      priceUsdc: e.priceUsd,
+      network: SOLANA_MAINNET,
+      asset: USDC_MINT,
+      payTo: MERCHANT_WALLET,
+      scheme: "exact",
+      tags: describe(e).tags,
+      input: { bodyType: "json", example: exampleOf(e), schema: bodySchemaOf(e) },
+      output: { example: e.bazaar.info.output.example },
+    })),
+    manual: `${PUBLIC_BASE}/skill.md`,
+    openapi: `${PUBLIC_BASE}/openapi.json`,
+    erc8004: `${PUBLIC_BASE}/.well-known/agent-registration.json`,
+  };
+}
+
+function openApi() {
+  const paths = {};
+  for (const e of CATALOG) {
+    paths[e.path] = { post: {
+      operationId: e.name,
+      summary: `${describe(e).serviceName}, $${e.priceUsd} USDC per call over x402`,
+      description: describe(e).description,
+      tags: describe(e).tags,
+      requestBody: { required: true, content: { "application/json": { schema: bodySchemaOf(e), example: exampleOf(e) } } },
+      responses: {
+        200: { description: "Paid answer (scan: 202 with a job to poll)", content: { "application/json": { example: e.bazaar.info.output.example } } },
+        402: { description: "Payment required: x402 v2 terms in the PAYMENT-REQUIRED header. Resend with PAYMENT-SIGNATURE." },
+      },
+      "x-x402": { version: 2, scheme: "exact", priceUsdc: e.priceUsd, network: SOLANA_MAINNET, asset: USDC_MINT, payTo: MERCHANT_WALLET },
+    } };
+  }
+  return {
+    openapi: "3.1.0",
+    info: { title: "Solana Watchdog x402 API", version: "1.0.0", description: "Security checks for Solana programs and code, paid per call in USDC over x402 v2. Checks, not audits.", contact: { email: CONTACT, url: LANDING_URL } },
+    servers: [{ url: PUBLIC_BASE }],
+    externalDocs: { description: "Agent manual", url: `${PUBLIC_BASE}/skill.md` },
+    paths,
+  };
+}
+
+function llmsTxt() {
+  return [
+    "# Solana Watchdog (x402)",
+    "",
+    "> Security checks for Solana programs and code that AI agents pay for per call, in USDC on Solana, over x402 v2. No account, no API key. Checks, not audits.",
+    "",
+    "Every endpoint answers 402 with x402 v2 terms in the PAYMENT-REQUIRED header; resend the same request with PAYMENT-SIGNATURE. The facilitator pays the network fee.",
+    "",
+    "## Endpoints",
+    "",
+    ...CATALOG.map((e) => `- POST ${PUBLIC_BASE}${e.path}, $${e.priceUsd} USDC: ${describe(e).description} Example body: ${JSON.stringify(exampleOf(e))}`),
+    "",
+    "## Docs",
+    "",
+    `- [Agent manual](${PUBLIC_BASE}/skill.md): request and response formats, both payment flows`,
+    `- [OpenAPI](${PUBLIC_BASE}/openapi.json)`,
+    `- [x402 discovery](${PUBLIC_BASE}/.well-known/x402)`,
+    `- [ERC-8004 registration](${PUBLIC_BASE}/.well-known/agent-registration.json)`,
+    `- [Website](${LANDING_URL}), also covering the EVM service`,
+    "- [MCP server](https://github.com/OxToF/watchdog-mcp): `npx -y watchdog-mcp`",
+    "",
+  ].join("\n");
+}
+
+const ROBOTS_TXT = "User-agent: *\nAllow: /\nDisallow: /r/\nDisallow: /admin/\nDisallow: /agent/jobs/\n";
+
 const SKILL_MD = existsSync(join(__dirname, "skill.md")) ? readFileSync(join(__dirname, "skill.md"), "utf8") : "";
 
 // Provider RPC URLs carry their API key (Helius: ?api-key=): log the host only.
@@ -769,6 +889,18 @@ const server = createServer(async (req, res) => {
         .replaceAll("{{MERCHANT}}", MERCHANT_WALLET || "(not configured)"), { "content-type": "text/markdown; charset=utf-8" });
     }
 
+    if (req.method === "GET" && url.pathname === "/.well-known/x402") return send(res, 200, x402Discovery(), { "cache-control": "public, max-age=300" });
+    if (req.method === "GET" && url.pathname === "/openapi.json") return send(res, 200, openApi(), { "cache-control": "public, max-age=300" });
+    if (req.method === "GET" && url.pathname === "/llms.txt") return send(res, 200, llmsTxt(), { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=300" });
+    if (req.method === "GET" && url.pathname === "/robots.txt") return send(res, 200, ROBOTS_TXT, { "content-type": "text/plain; charset=utf-8" });
+
+    // A GET or HEAD on a paid endpoint is a probe: answer with the terms, never a 404.
+    if ((req.method === "GET" || req.method === "HEAD") && catalogEntry(url.pathname)) {
+      if (!MERCHANT_WALLET || !facilitator) return send(res, 503, { error: "payments not configured" });
+      if (rateLimited(ip, 120)) return send(res, 429, { error: "rate limited" });
+      return discoveryQuote(res, catalogEntry(url.pathname));
+    }
+
     if (req.method === "POST" && url.pathname === "/agent/scan") {
       if (!MERCHANT_WALLET) return send(res, 503, { error: "payments not configured" });
       if (rateLimited(ip)) return send(res, 429, { error: "rate limited" });
@@ -785,6 +917,9 @@ const server = createServer(async (req, res) => {
       // Nothing is settled from a v1 header: say so rather than quote again.
       if (req.headers["x-payment"])
         return send(res, 400, { error: "x402 v1 X-PAYMENT is not accepted: use x402 v2 (PAYMENT-SIGNATURE, requirements in the PAYMENT-REQUIRED header) or the memo flow in /skill.md" });
+
+      // An empty POST is a probe: the price, without creating a job.
+      if (isEmptyBody(body) && facilitator) return discoveryQuote(res, catalogEntry("/agent/scan"));
 
       // Step 2: prove payment for a job created in step 1.
       if (body.jobId || body.signature) {
@@ -832,6 +967,7 @@ const server = createServer(async (req, res) => {
       if (rateLimited(ip, 120)) return send(res, 429, { error: "rate limited" });
       let body;
       try { body = await readBody(req, LOCKFILE_MAX_BYTES + 1e4); } catch { return send(res, 400, { error: "bad json" }); }
+      if (isEmptyBody(body) && !req.headers["payment-signature"]) return discoveryQuote(res, catalogEntry("/agent/check"));
       return handleCheck(req, res, body);
     }
 
@@ -840,6 +976,7 @@ const server = createServer(async (req, res) => {
       if (rateLimited(ip, 120)) return send(res, 429, { error: "rate limited" });
       let body;
       try { body = await readBody(req); } catch { return send(res, 400, { error: "bad json" }); }
+      if (isEmptyBody(body) && !req.headers["payment-signature"]) return discoveryQuote(res, catalogEntry("/agent/program"));
       return handleProgram(req, res, body);
     }
 
@@ -848,6 +985,7 @@ const server = createServer(async (req, res) => {
       if (rateLimited(ip, 60)) return send(res, 429, { error: "rate limited" });
       let body;
       try { body = await readBody(req, LOCKFILE_MAX_BYTES + 1e4); } catch { return send(res, 400, { error: "bad json" }); }
+      if (isEmptyBody(body) && !req.headers["payment-signature"]) return discoveryQuote(res, catalogEntry("/agent/watch"));
       return handleWatch(req, res, body);
     }
 
