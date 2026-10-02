@@ -24,6 +24,7 @@ import { sendReport } from "./email.mjs";
 import { verifyUsdcPayment, USDC_MINT } from "./verify.mjs";
 import { Facilitator, SOLANA_MAINNET, encodeHeader, decodeHeader, bazaarExtension } from "./x402.mjs";
 import { PayAIAuth } from "./payai-auth.mjs";
+import { Traffic } from "./traffic.mjs";
 import { inspectProgram, isPubkey } from "./program.mjs";
 import { Watcher, checkWebhookUrl, newSecret, programSnapshot, diffProgram, lockfileSnapshot, diffLockfile } from "./watch.mjs";
 
@@ -76,6 +77,7 @@ const ERC8004_AGENT_ID = process.env.ERC8004_AGENT_ID ? Number(process.env.ERC80
 const LANDING_URL = process.env.LANDING_URL || "https://watchdog.soladrome.finance";
 const store = new Store(JOBS_FILE);
 const watches = new Store(process.env.WATCHES_FILE || join(dirname(JOBS_FILE), "watches.json"));
+const traffic = new Traffic(process.env.TRAFFIC_FILE || join(dirname(JOBS_FILE), "traffic.jsonl"));
 const queue = new Queue();
 
 // --- tiny per-IP rate limit (protects the create endpoint) ---
@@ -727,6 +729,7 @@ function rpcHost(u) { try { return new URL(u).host; } catch { return "(unparseab
 const server = createServer(async (req, res) => {
   const ip = req.socket.remoteAddress || "?";
   const url = new URL(req.url, `http://localhost:${PORT}`);
+  traffic.watch(req, res, req.headers["fly-client-ip"] || req.socket.remoteAddress || "?");
   if (req.method === "OPTIONS") return send(res, 204, "");
 
   try {
@@ -937,6 +940,14 @@ const server = createServer(async (req, res) => {
       // don't leak email (or an agent job's token hash / memo) on a public endpoint
       const { email, accessTokenHash, viewTokenHash, memo, ...safe } = job;
       return send(res, 200, safe);
+    }
+
+    // Who called, where they stopped: GET /admin/traffic?hours=24
+    if (req.method === "GET" && url.pathname === "/admin/traffic") {
+      if (!ADMIN_TOKEN || (req.headers.authorization || "") !== `Bearer ${ADMIN_TOKEN}`)
+        return send(res, 401, { error: "unauthorized" });
+      const hours = Number(url.searchParams.get("hours")) || 24;
+      return send(res, 200, traffic.summary(Date.now() - hours * 3600_000));
     }
 
     if (req.method === "GET" && url.pathname === "/admin/jobs") {
