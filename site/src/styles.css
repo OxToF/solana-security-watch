@@ -10,6 +10,7 @@ a{color:var(--accent2);text-decoration:none} a:hover{text-decoration:underline}
 header{padding:22px 0;display:flex;align-items:center;justify-content:space-between}
 .brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.2px}
 .brand .bt{color:var(--fg)} .brand .g{color:var(--accent2)}
+.brand .chains{font-size:.72rem;font-weight:700;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:2px 9px;letter-spacing:.4px}
 .nav a{color:var(--muted);margin-left:20px;font-size:.92rem}
 .hero{padding:56px 0 30px;text-align:center}
 .hero h1{font-size:2.5rem;line-height:1.12;margin:0 0 14px}

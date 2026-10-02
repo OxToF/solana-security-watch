@@ -72,7 +72,7 @@ const ENDPOINTS = [
 
 function Logo({ size = 34 }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-label="Solana Watchdog">
+    <svg width={size} height={size} viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-label="Watchdog x402">
       <defs><linearGradient id="wgl" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#9945FF" /><stop offset="1" stopColor="#14F195" /></linearGradient></defs>
       <circle cx="32" cy="32" r="30" fill="url(#wgl)" />
       <path d="M16 24 L21 7 L27 20 Z" fill="#efe7d6" /><path d="M48 24 L43 7 L37 20 Z" fill="#efe7d6" />
@@ -165,7 +165,7 @@ export default function App() {
   return (
     <div className="wrap">
       <header>
-        <div className="brand"><Logo size={34} /><span className="bt">Solana <span className="g">Watchdog</span></span></div>
+        <div className="brand"><Logo size={34} /><span className="bt"><span className="g">Watchdog</span> x402</span><span className="chains">Solana · EVM</span></div>
         <nav className="nav">
           <a href="#mcp">MCP</a>
           <a href="#endpoints">Endpoints</a>
@@ -175,7 +175,7 @@ export default function App() {
       </header>
 
       <div className="hero">
-        <div className="eyebrow">Security checks paid by agents, per call, over x402</div>
+        <div className="eyebrow">Security checks for Solana and EVM, paid by agents per call over x402</div>
         <h1>Your agent checks the code <em>before</em> it signs</h1>
         <p className="sub">Who can replace this program? Does this lockfile carry a known advisory? Your agent asks Watchdog at the moment it decides, pays a few cents in USDC on its own over x402, and gets the answer in the same request. No account, no API key.</p>
         <div className="cta">
