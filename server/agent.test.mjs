@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { verifyFromTx, memosOf, USDC_MINT, MEMO_PROGRAM_ID } from "./verify.mjs";
+import { routeOf } from "./traffic.mjs";
 import { encodeHeader, decodeHeader, SOLANA_MAINNET } from "./x402.mjs";
 
 const MERCHANT = "7yMnWMrxzZ3YCtWXRsZEhAFwexHoJzBJy8RgN7Lhvy1P";
@@ -138,6 +139,7 @@ before(async () => {
       SCAN_PRICE_USD: "69",
       PUBLIC_BASE_URL: base,
       RESEND_API_KEY: "",
+      ADMIN_TOKEN: "test-admin",
       WATCH_ALLOW_PRIVATE_WEBHOOKS: "1",
       WATCH_TICK_MS: "100",
       WATCH_INTERVAL_MS: "0",
@@ -459,3 +461,22 @@ test("/agent/watch: created only once paid, signed webhook on a new advisory, re
   }
 });
 
+test("traffic log: who called and where they stopped, with no id, token or IP in it", async () => {
+  assert.equal(routeOf("/r/8f0c6a2e-1b7d-4c1e-9d3a-2f5e6b7c8d9e/AbCdEfGhIjKlMnOpQrStUv"), "/r/:id/:token");
+  assert.equal(routeOf("/agent/jobs/8f0c6a2e-1b7d-4c1e-9d3a-2f5e6b7c8d9e/report.md"), "/agent/jobs/:id/report.md");
+
+  assert.equal((await fetch(`${base}/admin/traffic`)).status, 401);
+  const auth = { authorization: "Bearer test-admin" };
+  // The log line is written on "finish": give the last responses a moment.
+  await new Promise((r) => setTimeout(r, 100));
+  const sum = await (await fetch(`${base}/admin/traffic?hours=1`, { headers: auth })).json();
+  assert.ok(sum.total > 0);
+  assert.ok(sum.agentFunnel.quoted >= 1, "the 402 quotes of the earlier tests are counted");
+  assert.ok(sum.routes["POST /agent/scan"]?.["402"] >= 1);
+  assert.equal(Object.keys(sum.routes).some((k) => k.includes("/health")), false);
+
+  const raw = readFileSync(join(testDir, "traffic.jsonl"), "utf8");
+  assert.doesNotMatch(raw, /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  assert.doesNotMatch(raw, /127\.0\.0\.1|::1/);
+  assert.doesNotMatch(raw, /Bearer/);
+});
