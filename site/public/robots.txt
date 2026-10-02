@@ -1,0 +1,5 @@
+# Watchdog x402. Search engines and AI crawlers are welcome.
+User-agent: *
+Allow: /
+
+Sitemap: https://watchdog.soladrome.finance/sitemap.xml

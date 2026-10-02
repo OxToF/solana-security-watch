@@ -1,0 +1,39 @@
+# Watchdog x402
+
+> Security checks for Solana and EVM that AI agents pay for per call, in USDC, over the x402 payment protocol (v2). No account, no API key. Also available as the open source watchdog-mcp MCP server.
+
+Use Watchdog when an agent is about to sign a transaction against a program or contract, add a dependency, merge code, or hold a position, and needs to know who can change the code and whether it carries known advisories.
+
+Every endpoint answers HTTP 402 with x402 v2 terms in the PAYMENT-REQUIRED header. Resend the same request with a PAYMENT-SIGNATURE header; the facilitator pays the network fee. An address that holds no program or contract is not charged.
+
+## Solana endpoints (USDC on Solana)
+
+Base URL: https://solana-security-watchdog-scan.fly.dev
+
+- POST /agent/program, $0.05: upgrade authority of a Solana program (single key, Squads v4 multisig with threshold and time lock, Squads v3, DAO, immutable), last deploy, verified build, security.txt. Body: {"programId": "<base58>"}
+- POST /agent/check, $0.01: RustSec / OSV advisories for a Cargo.lock or up to 100 crates.
+- POST /agent/scan, $0.50: full scan of a public Rust / Anchor repo. Body: {"repo": "https://github.com/<org>/<repo>"}
+- POST /agent/watch, $0.90: 30 days of hourly checks of a program or a Cargo.lock, signed webhooks.
+
+## EVM endpoints (USDC on Base)
+
+Base URL: https://evm-watchdog-scan.fly.dev
+
+- POST /agent/contract, $0.05: proxy kind, live implementation, upgrade controller and owner (key, Safe, timelock), Sourcify verification. Base and Robinhood Chain contracts.
+- POST /agent/check, $0.01: GitHub / OSV advisories for a package-lock.json, yarn.lock or up to 100 packages.
+- POST /agent/scan, $0.50: full scan of a public Solidity repo (Foundry or Hardhat).
+- POST /agent/watch, $0.90: 30 days of hourly checks of a contract or an npm lockfile, signed webhooks.
+
+## Docs
+
+- [Agent manual, Solana](https://solana-security-watchdog-scan.fly.dev/skill.md): request and response formats, payment flow
+- [Agent manual, EVM](https://evm-watchdog-scan.fly.dev/skill.md): request and response formats, payment flow
+- [watchdog-mcp](https://github.com/OxToF/watchdog-mcp): MCP server for Claude, Cursor and other clients, eight paid tools with a per-call cap and a session budget. Install: `npx -y watchdog-mcp`
+- [ERC-8004 registration, Solana service](https://solana-security-watchdog-scan.fly.dev/.well-known/agent-registration.json): agent #96652
+- [ERC-8004 registration, EVM service](https://evm-watchdog-scan.fly.dev/.well-known/agent-registration.json): agent #96653
+
+## Optional
+
+- [solana-security-watch](https://github.com/OxToF/solana-security-watch): the scanner, open source (MIT), with executable proofs of known Solana bug classes
+- [Sample scan report](https://github.com/OxToF/solana-security-watch/blob/main/examples/sample-scan-report.html)
+- Scope: checks, not a certified audit. Watchdog reports who controls code, known advisories and known vulnerability classes; it does not certify the absence of bugs.

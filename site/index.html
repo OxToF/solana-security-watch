@@ -4,11 +4,138 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Watchdog x402: Solana and EVM security checks your agent pays for</title>
-    <meta name="description" content="Who can change this Solana program or EVM contract, known advisories for a lockfile, repo scans and watches. Paid per call in USDC over x402, or through the watchdog-mcp MCP server." />
-      <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="description" content="Pay-per-call security checks for AI agents over x402: who can upgrade a Solana program or EVM contract, known advisories in a lockfile, repo scans and signed watches. USDC on Solana or Base, from $0.01, no API key. MCP server included." />
+    <meta name="keywords" content="x402, x402 v2, HTTP 402, agent payments, agentic payments, AI agent API, pay per call API, MCP server, Model Context Protocol, watchdog-mcp, PayAI Bazaar, ERC-8004, smart contract security, Solana security, Solana program upgrade authority, Squads multisig, EVM proxy admin, upgradeable contract check, Safe multisig, Anchor, Rust, Solidity, Cargo.lock advisories, RustSec, OSV, npm lockfile audit, USDC, Base, Solana" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
+    <meta name="theme-color" content="#0b0b16" />
+    <link rel="canonical" href="https://watchdog.soladrome.finance/" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <!-- Machine-readable entry points for agents and LLM crawlers -->
+    <link rel="alternate" type="text/plain" title="llms.txt" href="https://watchdog.soladrome.finance/llms.txt" />
+    <link rel="alternate" type="text/markdown" title="Agent manual (Solana)" href="https://solana-security-watchdog-scan.fly.dev/skill.md" />
+    <link rel="alternate" type="text/markdown" title="Agent manual (EVM)" href="https://evm-watchdog-scan.fly.dev/skill.md" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Watchdog x402" />
+    <meta property="og:url" content="https://watchdog.soladrome.finance/" />
+    <meta property="og:title" content="Watchdog x402: security checks your agent pays for" />
+    <meta property="og:description" content="Who can upgrade this Solana program or EVM contract? Known advisories in this lockfile? Your agent asks at the moment it decides and pays a few cents in USDC over x402. MCP server included." />
+    <meta property="og:image" content="https://watchdog.soladrome.finance/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Watchdog x402: security checks for Solana and EVM, paid by agents per call over x402" />
+    <meta property="og:locale" content="en_US" />
+
+    <!-- X / Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Watchdog x402: security checks your agent pays for" />
+    <meta name="twitter:description" content="Solana and EVM security checks for AI agents, paid per call in USDC over x402. From $0.01, no API key, MCP server included." />
+    <meta name="twitter:image" content="https://watchdog.soladrome.finance/og.png" />
+    <meta name="twitter:image:alt" content="Watchdog x402: security checks for Solana and EVM, paid by agents per call over x402" />
+
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "WebSite",
+          "@id": "https://watchdog.soladrome.finance/#website",
+          "url": "https://watchdog.soladrome.finance/",
+          "name": "Watchdog x402",
+          "description": "Solana and EVM security checks for AI agents, paid per call in USDC over x402.",
+          "inLanguage": "en"
+        },
+        {
+          "@type": "SoftwareApplication",
+          "@id": "https://watchdog.soladrome.finance/#app",
+          "name": "Watchdog x402",
+          "alternateName": ["Solana Watchdog", "EVM Watchdog", "watchdog-mcp"],
+          "url": "https://watchdog.soladrome.finance/",
+          "applicationCategory": "DeveloperApplication",
+          "applicationSubCategory": "Smart contract security API for AI agents",
+          "operatingSystem": "Any",
+          "description": "Pay-per-call security checks for AI agents over the x402 payment protocol: upgrade authority of a Solana program (single key, Squads multisig, immutable), proxy and owner of an EVM contract (key, Safe, timelock), known advisories for Cargo.lock and npm lockfiles, full repo scans, and 30-day signed webhook watches. Paid in USDC on Solana or Base. Also available as the watchdog-mcp MCP server.",
+          "keywords": "x402, agent payments, MCP server, Model Context Protocol, smart contract security, Solana, EVM, Base, USDC, ERC-8004, PayAI Bazaar",
+          "license": "https://opensource.org/licenses/MIT",
+          "isAccessibleForFree": false,
+          "sameAs": [
+            "https://github.com/OxToF/watchdog-mcp",
+            "https://github.com/OxToF/solana-security-watch",
+            "https://www.npmjs.com/package/watchdog-mcp",
+            "https://registry.modelcontextprotocol.io/v0/servers?search=watchdog-mcp"
+          ],
+          "offers": [
+            { "@type": "Offer", "name": "Program or contract upgrade authority check", "price": "0.05", "priceCurrency": "USD", "description": "POST /agent/program (Solana) or /agent/contract (EVM), paid in USDC over x402" },
+            { "@type": "Offer", "name": "Lockfile advisories check", "price": "0.01", "priceCurrency": "USD", "description": "POST /agent/check: RustSec / OSV / GitHub advisories for Cargo.lock, package-lock.json or yarn.lock" },
+            { "@type": "Offer", "name": "Full repo scan", "price": "0.50", "priceCurrency": "USD", "description": "POST /agent/scan: public Rust / Anchor or Solidity repo" },
+            { "@type": "Offer", "name": "30-day watch with signed webhooks", "price": "0.90", "priceCurrency": "USD", "description": "POST /agent/watch: hourly checks of a program, contract or lockfile" }
+          ]
+        },
+        {
+          "@type": "WebAPI",
+          "@id": "https://watchdog.soladrome.finance/#solana-api",
+          "name": "Watchdog x402 API (Solana)",
+          "url": "https://solana-security-watchdog-scan.fly.dev",
+          "documentation": "https://solana-security-watchdog-scan.fly.dev/skill.md",
+          "description": "x402 v2 endpoints paid in USDC on Solana: /agent/program, /agent/check, /agent/scan, /agent/watch.",
+          "provider": { "@id": "https://watchdog.soladrome.finance/#app" }
+        },
+        {
+          "@type": "WebAPI",
+          "@id": "https://watchdog.soladrome.finance/#evm-api",
+          "name": "Watchdog x402 API (EVM)",
+          "url": "https://evm-watchdog-scan.fly.dev",
+          "documentation": "https://evm-watchdog-scan.fly.dev/skill.md",
+          "description": "x402 v2 endpoints paid in USDC on Base: /agent/contract, /agent/check, /agent/scan, /agent/watch. Covers Base and Robinhood Chain contracts.",
+          "provider": { "@id": "https://watchdog.soladrome.finance/#app" }
+        },
+        {
+          "@type": "FAQPage",
+          "mainEntity": [
+            {
+              "@type": "Question",
+              "name": "How does an AI agent pay for a Watchdog check?",
+              "acceptedAnswer": { "@type": "Answer", "text": "Each endpoint answers HTTP 402 with x402 v2 terms in the PAYMENT-REQUIRED header. Any x402 client signs a USDC payment and retries the same request; the facilitator pays the network fee. No account and no API key." }
+            },
+            {
+              "@type": "Question",
+              "name": "Can I use Watchdog from Claude, Cursor or another MCP client?",
+              "acceptedAnswer": { "@type": "Answer", "text": "Yes. The open source watchdog-mcp server (npx -y watchdog-mcp) exposes eight tools that pay from a wallet you provide, with a per-call cap and a session budget." }
+            },
+            {
+              "@type": "Question",
+              "name": "Is this an audit?",
+              "acceptedAnswer": { "@type": "Answer", "text": "No. Watchdog reports who controls a program or contract, known advisories and known vulnerability classes. It does not certify the absence of bugs." }
+            }
+          ]
+        }
+      ]
+    }
+    </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Static content for crawlers that do not run JavaScript. React replaces it on load. -->
+      <main class="wrap">
+        <h1>Watchdog x402: security checks your agent pays for</h1>
+        <p>Security checks for Solana and EVM, paid by AI agents per call in USDC over the x402 payment protocol. No account, no API key. Also available as the open source <a href="https://github.com/OxToF/watchdog-mcp">watchdog-mcp</a> MCP server for Claude, Cursor and other MCP clients.</p>
+        <h2>x402 endpoints</h2>
+        <ul>
+          <li>Solana, POST /agent/program, $0.05: upgrade authority (single key, Squads v4 multisig, DAO, immutable), last deploy, verified build, security.txt.</li>
+          <li>Solana, POST /agent/check, $0.01: RustSec / OSV advisories for a Cargo.lock.</li>
+          <li>Solana, POST /agent/scan, $0.50: full scan of a public Rust / Anchor repo.</li>
+          <li>Solana, POST /agent/watch, $0.90: 30 days of hourly checks with signed webhooks.</li>
+          <li>EVM, POST /agent/contract, $0.05: proxy kind, live implementation, upgrade controller and owner (key, Safe, timelock). Base and Robinhood Chain.</li>
+          <li>EVM, POST /agent/check, $0.01: advisories for a package-lock.json or yarn.lock.</li>
+          <li>EVM, POST /agent/scan, $0.50: full scan of a public Solidity repo.</li>
+          <li>EVM, POST /agent/watch, $0.90: 30 days of hourly checks with signed webhooks.</li>
+        </ul>
+        <p>Agent manuals: <a href="https://solana-security-watchdog-scan.fly.dev/skill.md">Solana</a>, <a href="https://evm-watchdog-scan.fly.dev/skill.md">EVM</a>. Summary for LLMs: <a href="/llms.txt">llms.txt</a>.</p>
+        <p>Checks, not a certified audit. Open source under the MIT license.</p>
+      </main>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
