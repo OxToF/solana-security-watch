@@ -1,0 +1,165 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>What Anchor checks for free | Watchdog field report</title>
+<meta name="description" content="Orca Whirlpools runs six liquidity instructions through hand-written Pinocchio handlers. We checked that every check Anchor generates was re-implemented, and sent the one gap upstream.">
+<link rel="canonical" href="https://watchdog.soladrome.finance/field-report-orca-pinocchio.html">
+<meta property="og:type" content="article">
+<meta property="og:title" content="What Anchor checks for free: reviewing Orca's Pinocchio fast path">
+<meta property="og:description" content="Six hand-written liquidity handlers, every implicit Anchor check accounted for, one layout invariant sent upstream, and a checklist for your own Pinocchio port.">
+<meta property="og:url" content="https://watchdog.soladrome.finance/field-report-orca-pinocchio.html">
+<meta property="og:image" content="https://watchdog.soladrome.finance/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/favicon.svg">
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#eceef4;color:#1c2030;font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+.doc{max-width:880px;margin:28px auto;background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 12px 40px rgba(20,20,50,.12)}
+.hd{background:linear-gradient(125deg,#1a0f36 0%,#0e1730 60%,#0a1f2b 100%);color:#fff;padding:26px 34px;display:flex;align-items:center;gap:16px}
+.wm{font-weight:800;letter-spacing:.6px;font-size:15px}
+.wm .g{color:#14F195}
+.tl{color:#a9b0cf;font-size:12.5px;margin-top:2px}
+.hd .date{margin-left:auto;text-align:right;color:#a9b0cf;font-size:11.5px;line-height:1.35}
+.hd .date b{display:block;color:#fff;font-size:13px;font-weight:700}
+.sub{padding:26px 34px 6px;border-bottom:1px solid #eef0f5}
+h1{font-size:1.85rem;line-height:1.22;margin:0 0 10px;letter-spacing:-.4px}
+.lede{color:#4a5069;font-size:1.05rem;margin:0 0 20px}
+.body{padding:24px 34px 34px}
+h2{font-size:1.16rem;margin:32px 0 10px;letter-spacing:-.2px}
+h2:first-child{margin-top:6px}
+p{margin:0 0 14px}
+.tbl{width:100%;border-collapse:collapse;margin:16px 0 6px;font-size:.93rem}
+.tbl th{text-align:left;font-size:.76rem;text-transform:uppercase;letter-spacing:.5px;color:#8189a3;padding:0 10px 8px;border-bottom:1px solid #eef0f5;font-weight:700}
+.tbl td{padding:11px 10px;border-bottom:1px solid #f2f4f9;vertical-align:top}
+.tbl td.n{font-variant-numeric:tabular-nums}
+.tbl .big{font-size:1.22rem;font-weight:800;color:#dc2626}
+.tbl .dim{color:#8189a3}
+.tbl a{color:#6d3bd6;text-decoration:none;font-weight:600}
+.tbl a:hover{text-decoration:underline}
+.adv{display:flex;gap:12px;align-items:flex-start;padding:13px 0;border-top:1px solid #eef0f5}
+.adv:first-of-type{border-top:0}
+.chip{flex:none;border-radius:999px;color:#fff;font-size:.68rem;font-weight:800;letter-spacing:.4px;padding:3px 9px;margin-top:3px}
+.adv-id{font-weight:700;color:#4f2bbd;text-decoration:none;font-size:.95rem}
+.adv-id:hover{text-decoration:underline}
+.adv-sum{margin:2px 0 3px}
+.adv-pkg{color:#8189a3;font-size:.8rem}
+.all3{background:#f3ecff;color:#5b2bc4;border:1px solid #e0d2ff;border-radius:999px;padding:1px 9px;font-size:.71rem;font-weight:800;margin-left:8px;vertical-align:1px}
+.two3{background:#eef2ff;color:#3949ab;border:1px solid #d6ddff;border-radius:999px;padding:1px 9px;font-size:.71rem;font-weight:800;margin-left:8px;vertical-align:1px}
+.note{background:#f7f8fc;border:1px solid #eaecf3;border-radius:12px;padding:15px 18px;margin:18px 0;font-size:.95rem;color:#4a5069}
+.good{background:#effaf3;border:1px solid #c9eed7;border-radius:12px;padding:15px 18px;margin:18px 0;font-size:.95rem;color:#14603c}
+.good b{color:#0a7d43}
+.cta{background:linear-gradient(125deg,#1a0f36 0%,#0e1730 60%,#0a1f2b 100%);color:#fff;border-radius:14px;padding:24px 26px;margin:30px 0 6px;text-align:center}
+.cta h3{margin:0 0 8px;font-size:1.16rem;color:#fff}
+.cta p{color:#a9b0cf;margin:0 0 18px;font-size:.95rem}
+.btn{display:inline-block;background:linear-gradient(100deg,#9945FF,#14F195);color:#0c0a1a;font-weight:800;text-decoration:none;padding:12px 26px;border-radius:999px;font-size:.97rem}
+.meth{font-size:.9rem;color:#5a6076}
+.meth code{background:#f2f4f9;border-radius:5px;padding:1px 6px;font-size:.86em}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.ft{border-top:1px solid #eef0f5;margin-top:28px;padding-top:16px;color:#8189a3;font-size:.83rem}
+.ft a{color:#6d3bd6}
+a{color:#6d3bd6}
+@media(max-width:620px){.doc{margin:0;border-radius:0}.hd,.sub,.body{padding-left:20px;padding-right:20px}h1{font-size:1.5rem}.tbl{font-size:.86rem}.tbl th,.tbl td{padding-left:5px;padding-right:5px}}
+</style>
+<style>
+pre{background:#0f1426;color:#e6e9f5;border-radius:12px;padding:14px 16px;overflow-x:auto;font-size:.84rem;line-height:1.5;margin:14px 0 18px}
+p code,li code,td code{background:#f2f4f9;border-radius:5px;padding:1px 6px;font-size:.86em}
+ul,ol{margin:0 0 14px;padding-left:22px}li{margin:4px 0}
+.tbl td code{white-space:nowrap}
+.tbl-wrap{overflow-x:auto}
+.ck{color:#0a7d43;font-weight:800}
+</style></head><body>
+<div class="doc">
+  <div class="hd">
+    <svg width="46" height="46" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Watchdog x402"><defs><linearGradient id="wg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#9945FF"/><stop offset="1" stop-color="#14F195"/></linearGradient></defs><circle cx="32" cy="32" r="30" fill="url(#wg)"/><path d="M16 24 L21 7 L27 20 Z" fill="#efe7d6"/><path d="M48 24 L43 7 L37 20 Z" fill="#efe7d6"/><path d="M19.5 21 L21.6 12 L24.4 19 Z" fill="#b98cff"/><path d="M44.5 21 L42.4 12 L39.6 19 Z" fill="#b98cff"/><ellipse cx="32" cy="34" rx="15" ry="14" fill="#f4eddd"/><ellipse cx="32" cy="41" rx="8" ry="6.5" fill="#fffaf0"/><path d="M21.5 29 L28 30.5" stroke="#3a3550" stroke-width="1.6" stroke-linecap="round"/><path d="M42.5 29 L36 30.5" stroke="#3a3550" stroke-width="1.6" stroke-linecap="round"/><circle cx="26" cy="33" r="3" fill="#20202f"/><circle cx="38" cy="33" r="3" fill="#20202f"/><circle cx="27" cy="32.1" r=".9" fill="#fff"/><circle cx="39" cy="32.1" r=".9" fill="#fff"/><ellipse cx="32" cy="38.5" rx="2.7" ry="2" fill="#20202f"/><path d="M32 40.5 Q28 44 25 42" stroke="#20202f" stroke-width="1.4" fill="none" stroke-linecap="round"/><path d="M32 40.5 Q36 44 39 42" stroke="#20202f" stroke-width="1.4" fill="none" stroke-linecap="round"/><circle cx="45" cy="45" r="7.5" fill="rgba(255,255,255,.18)" stroke="#20202f" stroke-width="2.4"/><path d="M50.4 50.4 L57 57" stroke="#20202f" stroke-width="3.4" stroke-linecap="round"/></svg>
+    <div><div class="wm">WATCHDOG <span class="g">x402</span></div><div class="tl">Field report</div></div>
+    <div class="date">Published<b>4 October 2026</b></div>
+  </div>
+
+  <div class="sub">
+    <h1>What Anchor checks for free: reviewing Orca's Pinocchio fast path</h1>
+    <p class="lede">Orca Whirlpools now routes six liquidity instructions through hand-written Pinocchio handlers. Dropping Anchor saves compute, and removes every check Anchor generates for you. We went through the six handlers to see whether each check came back by hand. It did. Here is how we checked, the one gap we sent upstream, and a checklist for your own port.</p>
+  </div>
+
+  <div class="body">
+    <h2>The instructions on the fast path</h2>
+    <ul>
+      <li><code>increase_liquidity</code> and <code>increase_liquidity_v2</code></li>
+      <li><code>decrease_liquidity</code> and <code>decrease_liquidity_v2</code></li>
+      <li><code>reposition_liquidity_v2</code></li>
+      <li><code>increase_liquidity_by_token_amounts_v2</code></li>
+    </ul>
+    <p>Everything else, including swaps, still goes through Anchor. When a team drops Anchor on a hot path, the only security question that matters is simple to ask and slow to answer: <b>was every implicit check re-implemented by hand?</b></p>
+
+    <h2>The method: list what Anchor gave you, then find each check</h2>
+    <p>A Pinocchio handler receives raw <code>AccountInfo</code>s. Every line below has to come back as explicit code, and every missing line is a potential account substitution bug, the classic Solana critical.</p>
+    <div class="tbl-wrap"><table class="tbl">
+      <tr><th>What Anchor enforces</th><th>Anchor source</th><th>In the Pinocchio port</th></tr>
+      <tr><td>Owner is the expected program</td><td><code>Account&lt;'info, T&gt;</code></td><td><span class="ck">✓</span> <code>account_load.rs</code>, before any cast</td></tr>
+      <tr><td>Discriminator matches the type</td><td><code>Account&lt;'info, T&gt;</code></td><td><span class="ck">✓</span> <code>account_load.rs</code>, before any cast</td></tr>
+      <tr><td>Signer</td><td><code>Signer&lt;'info&gt;</code></td><td><span class="ck">✓</span> <code>next_signer</code></td></tr>
+      <tr><td>Writable</td><td><code>#[account(mut)]</code></td><td><span class="ck">✓</span> <code>next_mut</code></td></tr>
+      <tr><td>Program account is the right program</td><td><code>Program&lt;'info, T&gt;</code></td><td><span class="ck">✓</span> <code>next_program_*</code>; token program derived from the owner</td></tr>
+      <tr><td>Relations between accounts</td><td><code>has_one</code>, <code>constraint</code></td><td><span class="ck">✓</span> explicit comparisons in every handler</td></tr>
+      <tr><td>Token account mint and authority</td><td><code>token::mint</code>, <code>token::authority</code></td><td><span class="ck">✓</span> position NFT, vaults, mints re-checked</td></tr>
+    </table></div>
+
+    <h2>What we found</h2>
+    <p><b>Loading accounts.</b> Owner and discriminator are re-checked before any cast. For token accounts, the token program is not taken from the caller: it is derived from the account owner by its last byte (<code>0xa9</code> for SPL Token, <code>0xfc</code> for Token-2022). Multisig-sized accounts (355 bytes) are rejected where a token account is expected.</p>
+    <p><b>Signer, writable, program ID.</b> The account iterator enforces each constraint at the moment the account is pulled, not in a later check that can be forgotten.</p>
+    <p><b>Relations, the part that usually breaks.</b> Every handler re-establishes what <code>has_one</code> would have given:</p>
+    <ul>
+      <li>the position belongs to this whirlpool;</li>
+      <li>the position NFT matches the position mint and holds exactly 1 token;</li>
+      <li>the caller is the position owner or its delegate, and actually signed;</li>
+      <li>the token vaults are the whirlpool's own vaults;</li>
+      <li>on v2 instructions, the token mints are the whirlpool's mints;</li>
+      <li>the tick arrays are owned by the program, carry the right discriminator, and point back to this whirlpool.</li>
+    </ul>
+    <p>The lock check is present on decrease: a locked position cannot be drained through the fast path.</p>
+    <p><b>Edge cases.</b></p>
+    <ul>
+      <li><i>Lower and upper ticks in the same tick array.</i> Rust will not borrow the same account mutably twice. The loader detects the case by key and hands out one mutable reference. Resizing reads the current data length each time, so two tick initializations in one array grow it twice, as expected.</li>
+      <li><i>Reposition.</i> The netting of old and new range is bounded on both sides: a minimum on the full decrease, a maximum on the new range including fees.</li>
+      <li><i><code>increase_liquidity_by_token_amounts_v2</code></i>, the only handler with no Anchor original. It computes with transfer-fee-excluded amounts, then re-checks the fee-included amount against the user's maximum.</li>
+    </ul>
+    <div class="good"><b>No missing owner check, no missing signer, no unbound relation.</b> That is consistent with the program's audit history, and it is what a careful port looks like.</div>
+
+    <h2>The one gap: a layout invariant nobody enforced</h2>
+    <p>Pinocchio handlers skip deserialization by casting account bytes straight to a struct:</p>
+    <pre><code>let tick_array = unsafe { &amp;*(data.as_ptr() as *const MemoryMappedDynamicTickArray) };</code></pre>
+    <p>There is no length check on that cast. It is correct today because of three invariants:</p>
+    <ol>
+      <li>each <code>MemoryMapped*</code> struct has exactly the byte size of its Anchor account;</li>
+      <li>each struct has alignment 1 (only byte arrays inside);</li>
+      <li>dynamic tick arrays grow from 148 to 10,004 bytes as ticks are initialized, and the full-size struct still fits: even the smallest account plus the 10,240 bytes of realloc padding the runtime maps after account data covers 10,004 bytes, with 236 to spare.</li>
+    </ol>
+    <p>All three hold. None was written down in code. A new field on the Anchor side, or a change to the tick size constant, would compile without a word and turn the cast into an out-of-bounds read.</p>
+    <div class="note">This is not exploitable and not a bounty finding. It is a future-proofing gap, so we sent the fix upstream: compile-time assertions on all five memory-mapped account types that fail the build if any invariant breaks, proven to fire by mutating a constant and a struct. <a href="https://github.com/orca-so/whirlpools/pull/1408">orca-so/whirlpools#1408</a></div>
+    <p><b>A detail worth knowing if you do the same.</b> Our first version put the assertions right under each struct, and the compiled program changed. Rust embeds <code>file:line</code> in panic locations, so inserting lines mid-file shifts every line after it, and the binary with it. Appending the assertions at the end of each file gave a byte-identical <code>.so</code>. For a "no bytecode change" PR: append, do not insert, and compare hashes. Never compare sizes, a different binary can have the same size.</p>
+
+    <h2>Not covered</h2>
+    <p class="meth">We reviewed the six Pinocchio liquidity handlers and the shared code they rely on. We did not fully cover the swap path (still Anchor, and the most audited part of the program), the details of dynamic tick array rent accounting, or the Token-2022 transfer fee arithmetic.</p>
+
+    <h2>A checklist for your own Pinocchio port</h2>
+    <ol>
+      <li>Write down the full Anchor constraint list for each instruction <b>before</b> deleting it. That list is your test plan.</li>
+      <li>Re-check owner and discriminator before every cast. Never cast first and check later.</li>
+      <li>Derive program IDs from account owners instead of trusting a program account passed by the caller.</li>
+      <li>Re-establish every <code>has_one</code> as an explicit comparison. Grep the old code for <code>has_one</code> and <code>constraint</code>, then find the matching line in the new code, one by one.</li>
+      <li>Handle the same account passed twice on purpose: by key comparison, or by explicit rejection.</li>
+      <li>Assert struct layouts at compile time: size, alignment, and the realloc margin for any account that grows.</li>
+      <li>Mutation-test every guard. A check you have never seen fail is a check you have not proved.</li>
+    </ol>
+
+    <div class="cta">
+      <h3>Check who can change a program before you touch it</h3>
+      <p>Watchdog reports a Solana program's upgrade authority, multisig threshold and time lock, verified build and security.txt. Payable per call by agents over x402, no account.</p>
+      <a class="btn" href="/">See the endpoints</a>
+    </div>
+
+    <div class="ft">
+      Watchdog x402. A review of public code, not an audit. It does not certify the absence of bugs.
+      Code reviewed: <a href="https://github.com/orca-so/whirlpools">github.com/orca-so/whirlpools</a> at <code>f4b99e7</code>, public <code>main</code>.
+      No exploitable issue was found; the one hardening suggestion was sent to Orca as a public pull request before this page went up.
+    </div>
+  </div>
+</div>
+</body></html>
