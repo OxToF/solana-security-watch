@@ -37,3 +37,7 @@ Base URL: https://evm-watchdog-scan.fly.dev
 - [solana-security-watch](https://github.com/OxToF/solana-security-watch): the scanner, open source (MIT), with executable proofs of known Solana bug classes
 - [Sample scan report](https://github.com/OxToF/solana-security-watch/blob/main/examples/sample-scan-report.html)
 - Scope: checks, not a certified audit. Watchdog reports who controls code, known advisories and known vulnerability classes; it does not certify the absence of bugs.
+
+## Field reports
+
+- [What Anchor checks for free: reviewing Orca's Pinocchio fast path](https://watchdog.soladrome.finance/field-report-orca-pinocchio.html): how to verify that a Pinocchio port re-implements every implicit Anchor check, with a reusable checklist
