@@ -78,3 +78,7 @@ td:last-child{color:var(--muted)}
 #browser .scanbox{margin:0}
 @media (max-width:720px){.moments,.two{grid-template-columns:1fr}.hero h1{font-size:2rem}.nav a{margin-left:12px}}
 @media (max-width:480px){header{flex-direction:column;gap:10px}.nav a{margin:0 8px}}
+/* Android app (Seeker): the scan alone, sized for a phone */
+.app #browser{padding-top:8px}
+.app h1{font-size:1.6rem;line-height:1.2;margin:8px 0 10px}
+.app .fld,.app .btn.pay{width:100%;box-sizing:border-box}

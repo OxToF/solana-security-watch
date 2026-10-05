@@ -1,0 +1,17 @@
+{
+  "name": "Watchdog: Solana repo scan",
+  "short_name": "Watchdog",
+  "description": "Scan a public Solana / Anchor repo, pay in USDC from your wallet, get the report by email.",
+  "id": "/?app=seeker",
+  "start_url": "/?app=seeker",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b0b16",
+  "theme_color": "#0b0b16",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

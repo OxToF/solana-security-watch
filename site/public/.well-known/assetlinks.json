@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "finance.soladrome.watchdog",
+      "sha256_cert_fingerprints": [
+        "03:EA:47:34:D0:51:26:AB:3F:D0:67:7E:C5:A5:7E:A5:10:CA:43:C2:D6:05:56:E4:E7:70:D3:FC:12:11:E7:3E"
+      ]
+    }
+  }
+]
