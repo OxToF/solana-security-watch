@@ -868,6 +868,9 @@ const server = createServer(async (req, res) => {
   if (req.method === "OPTIONS") return send(res, 204, "");
 
   try {
+    // The API host has no page of its own: people landing here from a search
+    // result belong on the site, not on a 404.
+    if ((req.method === "GET" || req.method === "HEAD") && url.pathname === "/") return send(res, 301, "", { location: LANDING_URL });
     if (req.method === "GET" && url.pathname === "/health") return send(res, 200, { ok: true, facilitatorLane: payaiAuth ? "payai" : payaiAuthError ? "public-key-ignored" : "public" });
 
     // The private report link from the email: /r/<jobId>/<token>
