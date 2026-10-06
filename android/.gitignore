@@ -1,0 +1,11 @@
+# Build outputs: rebuild with `bubblewrap build`, never commit a signed binary
+*.apk
+*.aab
+*.idsig
+.gradle/
+build/
+app/build/
+local.properties
+# The release keystore lives outside the repo (~/.android-keys/watchdog/)
+*.jks
+*.keystore

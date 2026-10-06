@@ -15,6 +15,13 @@ const AMOUNT = Number(import.meta.env.VITE_AMOUNT_USDC || 69);
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const MEMO_PROGRAM = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
 
+// Launched from the Android app (Seeker / Solana dApp Store): its start URL
+// carries ?app=seeker, and a Trusted Web Activity runs in standalone mode.
+const IN_APP =
+  typeof window !== "undefined" &&
+  (new URLSearchParams(window.location.search).get("app") === "seeker" ||
+    window.matchMedia?.("(display-mode: standalone)").matches);
+
 const isRepo = (s) => /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/.test(s);
 const isEmail = (s) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s);
 
@@ -162,6 +169,45 @@ export default function App() {
     }
   }
 
+  const scanBox = (
+    <div className="scanbox">
+      <div className="connect-row"><WalletMultiButton /></div>
+      <input className="fld" type="url" placeholder="https://github.com/your-org/your-repo" value={repo} onChange={(e) => setRepo(e.target.value)} />
+      <input className="fld" type="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+      <button className="btn pay" onClick={pay} disabled={busy}>{busy ? "Working..." : `Pay ${AMOUNT} USDC & scan`}</button>
+      <div className="price">Scan and emailed report, <b>{AMOUNT} USDC</b> on Solana. Public repo only.</div>
+      {msg && <div className={`msg ${msg.kind}`}>{msg.text}</div>}
+      <div className="hint">We only clone public code, never your secrets.</div>
+    </div>
+  );
+
+  const scope = (
+    <section>
+      <div className="scope">
+        <strong>What this is not.</strong> These are checks, not an audit. Watchdog reports who controls a program, known advisories and known vulnerability classes; it does not certify the absence of bugs.
+      </div>
+    </section>
+  );
+
+  // The phone app sells the one thing a person buys from a phone: the paid scan,
+  // signed with the wallet on the device. The agent pages stay on the website.
+  if (IN_APP) {
+    return (
+      <div className="wrap app">
+        <header>
+          <div className="brand"><Logo size={34} /><span className="bt"><span className="g">Watchdog</span></span><span className="chains">Solana</span></div>
+        </header>
+        <section id="browser">
+          <h1>Scan a Solana repo before you trust it</h1>
+          <p className="lead">Upgrade paths, known advisories in its dependencies, build hygiene and known bug classes with file and line. Connect your wallet, pay in USDC, and the report lands in your inbox.</p>
+          {scanBox}
+        </section>
+        {scope}
+        <footer>Solana Watchdog. Open source under the MIT license. Checks, not a certified audit. <a href="/privacy">Privacy</a></footer>
+      </div>
+    );
+  }
+
   return (
     <div className="wrap">
       <header>
@@ -245,22 +291,10 @@ export default function App() {
       <section id="browser">
         <h2>Prefer a browser?</h2>
         <p className="lead">Run the full scan of a public Rust / Anchor repo yourself. Connect a Solana wallet, pay in USDC, and receive a branded report by email.</p>
-        <div className="scanbox">
-          <div className="connect-row"><WalletMultiButton /></div>
-          <input className="fld" type="url" placeholder="https://github.com/your-org/your-repo" value={repo} onChange={(e) => setRepo(e.target.value)} />
-          <input className="fld" type="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
-          <button className="btn pay" onClick={pay} disabled={busy}>{busy ? "Working..." : `Pay ${AMOUNT} USDC & scan`}</button>
-          <div className="price">Scan and emailed report, <b>{AMOUNT} USDC</b> on Solana. Public repo only.</div>
-          {msg && <div className={`msg ${msg.kind}`}>{msg.text}</div>}
-          <div className="hint">We only clone public code, never your secrets.</div>
-        </div>
+        {scanBox}
       </section>
 
-      <section>
-        <div className="scope">
-          <strong>What this is not.</strong> These are checks, not an audit. Watchdog reports who controls a program, known advisories and known vulnerability classes; it does not certify the absence of bugs.
-        </div>
-      </section>
+      {scope}
 
       <section id="proof" className="proof">
         <h2>Verify before you pay</h2>
@@ -272,7 +306,7 @@ export default function App() {
         </ul>
       </section>
 
-      <footer>Solana Watchdog and EVM Watchdog. Open source under the MIT license. Checks, not a certified audit.</footer>
+      <footer>Solana Watchdog and EVM Watchdog. Open source under the MIT license. Checks, not a certified audit. <a href="/privacy">Privacy</a></footer>
     </div>
   );
 }

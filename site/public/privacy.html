@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy policy · Watchdog</title>
+<meta name="description" content="What Watchdog (watchdog.soladrome.finance, the Watchdog Android app and its x402 APIs) collects, why, who processes it and how to have it deleted.">
+<link rel="icon" href="/favicon.svg">
+<style>
+  :root { color-scheme: dark; --bg: #0B0B16; --fg: #e8eaf4; --mute: #a9b0cf; --line: #24263a; --accent: #14F195; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 40px 16px 64px; }
+  a { color: var(--accent); }
+  h1 { font-size: 28px; margin: 0 0 4px; }
+  h2 { font-size: 19px; margin: 32px 0 8px; }
+  .muted { color: var(--mute); font-size: 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 8px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px 8px 0; border-bottom: 1px solid var(--line); }
+  th { color: var(--mute); font-weight: 600; }
+  code { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+  .back { display: inline-block; margin-bottom: 24px; font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" href="/">← Watchdog</a>
+  <h1>Privacy policy</h1>
+  <p class="muted">Last updated 6 October 2026. Applies to watchdog.soladrome.finance, the Watchdog Android app (Solana dApp Store) and the Watchdog x402 APIs.</p>
+
+  <p>Watchdog runs security checks on code and on-chain programs. It has no user accounts, sets no advertising or analytics cookies, and sells no data. This page lists everything it does collect.</p>
+
+  <h2>What we collect, and why</h2>
+  <table>
+    <tr><th>Data</th><th>When</th><th>Why</th></tr>
+    <tr><td>The repository URL, program or contract address, or lockfile you submit</td><td>Every check or scan</td><td>It is the thing being checked. Public repositories only.</td></tr>
+    <tr><td>Your email address</td><td>Only if you enter one for a scan</td><td>To send you the report and a private link to it. Nothing else is sent to it.</td></tr>
+    <tr><td>The scan report</td><td>Every paid scan</td><td>Kept on our server so the private link in your email keeps working. The link carries a secret token; only its hash is stored.</td></tr>
+    <tr><td>Webhook URL</td><td>Only if you create a watch</td><td>To notify you of a change during the paid watch period.</td></tr>
+    <tr><td>Your wallet's public address and the payment transaction</td><td>When you pay</td><td>To confirm the payment. Payments are public on the blockchain by nature; we never see or store a private key or seed phrase.</td></tr>
+    <tr><td>Request log: time, method, path, status, user agent, referring site, and a salted hash of your IP address</td><td>Every request to the APIs</td><td>To count traffic and debug failures. The IP itself is never written down, query strings and request bodies are not logged, and report tokens are removed from paths.</td></tr>
+  </table>
+
+  <h2>In the Android app</h2>
+  <p>The app displays this website. Paying connects to a wallet app on your phone (Seed Vault, Phantom, Solflare…) through the Mobile Wallet Adapter: the wallet shows you the transaction and signs it, and the app never has access to your keys. The app asks for no device permissions beyond internet access, and contains no tracking SDK.</p>
+
+  <h2>Who processes it</h2>
+  <ul>
+    <li><b>Fly.io</b> hosts the APIs and stores reports and request logs.</li>
+    <li><b>Vercel</b> hosts this website.</li>
+    <li><b>Resend</b> delivers report emails.</li>
+    <li><b>GitHub</b> serves the public repository we download to scan; <b>OSV.dev</b> answers advisory lookups for the package names and versions found in it.</li>
+    <li><b>Blockchain RPC providers</b> (Solana, Base, Robinhood Chain) and the <b>x402 payment facilitator</b> (PayAI) see the addresses and transactions needed to check a program or settle a payment.</li>
+  </ul>
+  <p>Each of them processes data under its own privacy policy. We share nothing with anyone else, and nothing for advertising.</p>
+
+  <h2>How long we keep it</h2>
+  <p>Reports and the email they were sent to are kept so your link keeps working, until you ask us to delete them. Watches stop at the end of the period you paid for. On-chain payments cannot be deleted by anyone.</p>
+
+  <h2>Your choices</h2>
+  <p>You can use every check without giving an email. To get a copy of what we hold about you, or to have a report and its email deleted, write to <a href="mailto:solanawatchdog@proton.me">solanawatchdog@proton.me</a> with the repository or the job reference from your email.</p>
+
+  <h2>Children</h2>
+  <p>Watchdog is a developer tool and is not directed at children.</p>
+
+  <h2>Changes</h2>
+  <p>If this policy changes, the date at the top changes with it.</p>
+</main>
+</body>
+</html>
