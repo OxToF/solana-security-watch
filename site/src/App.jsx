@@ -203,7 +203,7 @@ export default function App() {
           {scanBox}
         </section>
         {scope}
-        <footer>Solana Watchdog. Open source under the MIT license. Checks, not a certified audit.</footer>
+        <footer>Solana Watchdog. Open source under the MIT license. Checks, not a certified audit. <a href="/privacy">Privacy</a></footer>
       </div>
     );
   }
@@ -306,7 +306,7 @@ export default function App() {
         </ul>
       </section>
 
-      <footer>Solana Watchdog and EVM Watchdog. Open source under the MIT license. Checks, not a certified audit.</footer>
+      <footer>Solana Watchdog and EVM Watchdog. Open source under the MIT license. Checks, not a certified audit. <a href="/privacy">Privacy</a></footer>
     </div>
   );
 }
