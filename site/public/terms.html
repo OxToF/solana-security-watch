@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terms of use · Watchdog</title>
+<meta name="description" content="The terms for using Watchdog (watchdog.soladrome.finance, the Watchdog Android app and its x402 APIs): what a check is, payment, failed scans and liability.">
+<link rel="icon" href="/favicon.svg">
+<style>
+  :root { color-scheme: dark; --bg: #0B0B16; --fg: #e8eaf4; --mute: #a9b0cf; --line: #24263a; --accent: #14F195; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 40px 16px 64px; }
+  a { color: var(--accent); }
+  h1 { font-size: 28px; margin: 0 0 4px; }
+  h2 { font-size: 19px; margin: 32px 0 8px; }
+  .muted { color: var(--mute); font-size: 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 8px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px 8px 0; border-bottom: 1px solid var(--line); }
+  th { color: var(--mute); font-weight: 600; }
+  code { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+  .back { display: inline-block; margin-bottom: 24px; font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" href="/">← Watchdog</a>
+  <h1>Terms of use</h1>
+  <p class="muted">Last updated 11 October 2026. Applies to watchdog.soladrome.finance, the Watchdog Android app (Solana dApp Store) and the Watchdog x402 APIs.</p>
+
+  <p>By using Watchdog you accept these terms. If you do not accept them, do not use the service.</p>
+
+  <h2>What Watchdog is</h2>
+  <p>Watchdog runs automated security checks on public code repositories and on-chain programs: who can upgrade a program, known advisories in the exact dependency versions it ships, build hygiene, and known vulnerability classes reported as leads to confirm by reading.</p>
+  <p><b>These are checks, not an audit.</b> A report lists what the checks found. It does not certify that code is free of bugs, that a program is safe to use, or that funds placed in it are safe. Findings can be incomplete or wrong. Nothing in a report is financial, investment or legal advice, and you remain responsible for any decision you make with it.</p>
+
+  <h2>What you may submit</h2>
+  <p>Submit only public repositories and public on-chain addresses. Do not submit secrets, private code or anything you do not have the right to share. Do not use Watchdog to attack, overload or harm any system, including Watchdog itself.</p>
+
+  <h2>Payment</h2>
+  <p>Prices are shown before you pay, and you pay on-chain in USDC from your own wallet. Your wallet shows you the transaction and you sign it; Watchdog never has access to your keys. A payment is final once it is confirmed on the blockchain, and nobody can reverse it.</p>
+
+  <h2>If a paid scan fails</h2>
+  <p>If you paid and no report reaches you, write to <a href="mailto:solanawatchdog@proton.me">solanawatchdog@proton.me</a> with the repository and the job reference or transaction signature. We will check the case and either deliver the report or refund the payment to the wallet it came from. A scan that completed and delivered its report is not refunded because of what the report says, or because it found nothing.</p>
+
+  <h2>Availability</h2>
+  <p>Watchdog is provided as is, without warranty of any kind. It may be interrupted, changed or discontinued. It depends on third parties (GitHub, OSV.dev, blockchain RPC providers, the payment facilitator, email delivery) that can fail independently of us.</p>
+
+  <h2>Liability</h2>
+  <p>To the extent the law allows, Watchdog is not liable for any loss arising from the use of a report or of the service, including lost funds, exploits or bugs the checks did not find. In any case, our total liability is limited to the amount you paid for the scan or check concerned.</p>
+
+  <h2>Open source</h2>
+  <p>The scanner is open source under the MIT license at <a href="https://github.com/OxToF/solana-security-watch">github.com/OxToF/solana-security-watch</a>. The MIT license governs the code; these terms govern the hosted service.</p>
+
+  <h2>Privacy</h2>
+  <p>What we collect and why is described in the <a href="/privacy">privacy policy</a>.</p>
+
+  <h2>Changes</h2>
+  <p>If these terms change, the date at the top changes with it. Using the service after a change means you accept the new terms.</p>
+
+  <h2>Contact</h2>
+  <p><a href="mailto:solanawatchdog@proton.me">solanawatchdog@proton.me</a></p>
+</main>
+</body>
+</html>
