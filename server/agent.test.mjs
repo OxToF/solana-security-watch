@@ -61,6 +61,8 @@ let rpc, fac, osv, srv, base, testDir, currentMemo = null, x402Memo = null, osvD
 const osvCalls = [];
 // Web-flow payments the fake RPC knows, by signature.
 const webTxs = new Map();
+// What the fake RPC lists for the merchant address (getSignaturesForAddress).
+const chainSigs = [];
 // What the fake facilitator was asked to settle against, per call.
 const facCalls = [];
 const port = 18000 + Math.floor(Math.random() * 1000);
@@ -70,7 +72,11 @@ before(async () => {
     let b = "";
     req.on("data", (c) => (b += c));
     req.on("end", () => {
-      const { params } = JSON.parse(b);
+      const { method, params } = JSON.parse(b);
+      if (method === "getSignaturesForAddress") {
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result: params[0] === MERCHANT ? chainSigs : [] }));
+      }
       const result = webTxs.has(params[0]) ? webTxs.get(params[0])
         : params[0] === SIG_OK ? fakeTx({ memo: currentMemo })
         : params[0] === SIG_NO_MEMO ? fakeTx()
@@ -142,6 +148,7 @@ before(async () => {
       OSV_VULNS_URL: `http://127.0.0.1:${osv.address().port}/v1/vulns`,
       SCAN_PRICE_USD: "69",
       SCAN_PRICE_SOL: "0.1",
+      PAY_WATCH_MS: "100",
       ALLOW_ORIGIN: "https://site.example, https://alias.example/",
       ALLOW_LOCAL: "1",
       FREE_SCANS_PER_HOUR: "2",
@@ -673,7 +680,9 @@ test("SOL payment: the merchant's lamports must rise by the price, with the memo
 
 test("web unlock: SOL or USDC, bound to its job by the memo, never twice", async () => {
   const h = { "content-type": "application/json", "fly-client-ip": "10.9.9.9" };
-  const order = async (currency) => (await fetch(`${base}/scan`, { method: "POST", headers: h, body: JSON.stringify({ repo: "https://github.com/OxToF/solana-security-watch", email: "a@b.co", currency }) })).json();
+  const order = async (currency) => (await fetch(`${base}/scan`, { method: "POST", headers: h, body: JSON.stringify({ local: "/nonexistent", email: "a@b.co", currency }) })).json();
+  // A local path that does not exist: the paid job fails at once instead of scanning
+  // GitHub in the background, whose OSV calls would land in another test's count.
   const verify = (jobId, signature) => fetch(`${base}/pay/verify`, { method: "POST", headers: h, body: JSON.stringify({ jobId, signature }) });
 
   const sol = await order("SOL");
@@ -707,4 +716,22 @@ test("CORS: every listed origin is answered with itself, any other gets the firs
     assert.equal(r.headers.get("access-control-allow-origin"), want);
     assert.match(r.headers.get("vary"), /Origin/);
   }
+});
+
+test("a payment the page never reported is found on-chain by its memo", async () => {
+  const h = { "content-type": "application/json", "fly-client-ip": "10.8.8.8" };
+  const order = await (await fetch(`${base}/scan`, { method: "POST", headers: h, body: JSON.stringify({ local: "/nonexistent", email: "a@b.co", currency: "SOL" }) })).json();
+  const other = await (await fetch(`${base}/scan`, { method: "POST", headers: h, body: JSON.stringify({ local: "/nonexistent", email: "a@b.co", currency: "SOL" }) })).json();
+  const status = async (id) => (await (await fetch(`${base}/jobs/${id}`)).json()).status;
+  // Too little SOL under the right memo is listed but never credits the job.
+  webTxs.set("F".repeat(88), fakeSolTx({ lamports: 50_000_000, memo: other.jobId }));
+  chainSigs.push({ signature: "F".repeat(88), err: null, memo: `[36] ${other.jobId}` });
+  webTxs.set("G".repeat(88), fakeSolTx({ lamports: 100_000_000, memo: order.jobId }));
+  chainSigs.push({ signature: "G".repeat(88), err: null, memo: `[36] ${order.jobId}` });
+  let s;
+  for (let i = 0; i < 50; i++) { s = await status(order.jobId); if (s !== "pending_payment") break; await new Promise((r) => setTimeout(r, 100)); }
+  assert.notEqual(s, "pending_payment");
+  assert.equal(await status(other.jobId), "pending_payment");
+  // The page reporting it afterwards is refused, not credited twice.
+  assert.equal((await fetch(`${base}/pay/verify`, { method: "POST", headers: h, body: JSON.stringify({ jobId: order.jobId, signature: "G".repeat(88) }) })).status, 409);
 });

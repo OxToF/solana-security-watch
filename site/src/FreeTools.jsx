@@ -155,12 +155,14 @@ function RepoScan() {
     if (!isEmail(email)) return setPayMsg({ kind: "err", text: "Enter the email the report goes to." });
     if (!connected || !publicKey) return setPayMsg({ kind: "err", text: "Connect your wallet first." });
     setBusy(true);
+    let ordered = false;
     try {
       setPayMsg({ kind: "", text: "Creating your order…" });
       const r = await fetch(`${API_BASE}/scan`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ repo: repo.trim(), email, currency }) });
       if (!r.ok) throw new Error("Could not create the order. Try again.");
       const order = await r.json();
       const { jobId } = order;
+      ordered = true;
       const unit = order.currency || "USDC";
       const amount = order.amount ?? (unit === "SOL" ? priceSol : price);
       const merchant = new PublicKey(WALLET);
@@ -184,10 +186,15 @@ function RepoScan() {
       const v = await fetch(`${API_BASE}/pay/verify`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jobId, signature }) });
       if (!v.ok) {
         const e = await v.json().catch(() => ({}));
-        throw new Error(`Payment sent but not verified yet (${e.error || "unknown"}). Keep this signature: ${signature}`);
+        throw new Error(`Payment sent, still confirming (${e.error || "unknown"}). Signature: ${signature}.`);
       }
       setPayMsg({ kind: "ok", text: `Paid. The full report arrives by email in a few minutes. Signature: ${signature}` });
-    } catch (e) { setPayMsg({ kind: "err", text: e?.message || "Payment failed or was cancelled." }); }
+    } catch (e) {
+      // The server also finds the payment on-chain by its memo: a paid order is
+      // delivered even when the page lost the hand during the wallet round-trip.
+      const note = ordered ? " If the payment went through, the report still reaches your inbox within a few minutes." : "";
+      setPayMsg({ kind: "err", text: (e?.message || "Payment failed or was cancelled.") + note });
+    }
     finally { setBusy(false); }
   }
 

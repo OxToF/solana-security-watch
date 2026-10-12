@@ -162,7 +162,7 @@ async function runJob(jobId) {
     const top = bk.onchain.slice(0, 3).map((a) => `- [${a.severity}] ${a.id} — ${a.summary}`).join("\n");
     if (job.email) await sendReport({
       to: job.email,
-      subject: `Your Solana security scan — ${result.meta.owner}/${result.meta.repo}`,
+      subject: `Watchdog checked ${result.meta.owner}/${result.meta.repo}: your report is ready`,
       text: `Scan complete for ${job.repo}.\n\n${onchainN} advisories on the on-chain surface (crates your deployed program links against), ${offchainN} more on toolchain and unmaintained crates, ${leadN} code leads.\n\nOn-chain advisories:\n${top || "(none — clean on the deployed surface)"}\n\nView your report: ${viewUrl}\nWant the findings fixed? Write to ${CONTACT} with reference ${jobId}.\n\nThe report is also attached.`,
       html: `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:560px;margin:auto;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #eaecf3">
 <div style="background:#160b2e;padding:18px 22px;border-bottom:3px solid #14F195">
@@ -202,6 +202,54 @@ async function runFreeJob(jobId) {
   } catch (e) {
     store.update(jobId, { status: "error", error: String(e.message).slice(0, 300) });
     console.error(`[free ${jobId}] failed:`, e.message);
+  }
+}
+
+// --- web payments: credited by the page OR found on-chain ---
+// The page sends the signature to /pay/verify once the wallet returns. On a phone
+// the page can lose the hand during the wallet round-trip (2026-10-12: 0.1 SOL
+// landed, the page never called back), so the server also looks for payments
+// that carry a pending job's memo. Both paths go through creditWebPayment().
+async function creditWebPayment(job, signature, lookup = {}) {
+  // Replay protection: a signature can pay for exactly one job.
+  if (store.findBySignature(signature)) return { status: 409, body: { error: "payment signature already used" } };
+  // The page writes the job id in a memo: requiring it means a transfer seen
+  // on-chain cannot be claimed for someone else's job before its payer does.
+  const result = job.currency === "SOL"
+    ? await verifySolPayment({ signature, lamports: solToLamports(job.priceSol), merchant: MERCHANT_WALLET, rpcUrl: SOLANA_RPC_URL, memo: job.id, ...lookup })
+    : await verifyUsdcPayment({ signature, amountUsdc: job.priceUsd || PRICE_USD, merchant: MERCHANT_WALLET, rpcUrl: SOLANA_RPC_URL, memo: job.id, ...lookup });
+  if (!result.ok) return { status: 402, body: { error: `payment not verified: ${result.reason}` } };
+  // Re-check after the await: two concurrent proofs must not both win.
+  if (store.findBySignature(signature) || store.get(job.id).status !== "pending_payment")
+    return { status: 409, body: { error: "payment already credited" } };
+  store.update(job.id, { status: "paid", paidAt: new Date().toISOString(), paymentSignature: signature });
+  queue.enqueue(() => runJob(job.id));
+  return { status: 202, body: { jobId: job.id, status: "paid", queued: true } };
+}
+
+const PAY_WATCH_MS = Number(process.env.PAY_WATCH_MS || 20_000);
+const PAY_WATCH_WINDOW_MS = 24 * 3600_000;
+let payWatchBusy = false;
+async function watchWebPayments() {
+  if (payWatchBusy || !MERCHANT_WALLET) return;
+  const now = Date.now();
+  const pending = store.list((j) => !j.free && !j.agent && j.status === "pending_payment" && now - Date.parse(j.createdAt) < PAY_WATCH_WINDOW_MS);
+  if (!pending.length) return;
+  payWatchBusy = true;
+  try {
+    const sigs = (await programRpc("getSignaturesForAddress", [MERCHANT_WALLET, { limit: 50, commitment: "confirmed" }])) || [];
+    for (const s of sigs) {
+      if (s.err || typeof s.memo !== "string") continue;
+      // RPC renders memos as "[<len>] <text>"; the page's memo is the bare job id.
+      const job = pending.find((j) => s.memo.includes(j.id));
+      if (!job || store.get(job.id).status !== "pending_payment") continue;
+      const r = await creditWebPayment(job, s.signature, { retries: 2, delayMs: 1000 });
+      if (r.status === 202) console.log(`[pay] job ${job.id} credited from chain: ${s.signature}`);
+    }
+  } catch (e) {
+    console.error("[pay] watch failed:", String(e.message).slice(0, 200));
+  } finally {
+    payWatchBusy = false;
   }
 }
 
@@ -1148,23 +1196,8 @@ const server = createServer(async (req, res) => {
       if (!job || job.free) return send(res, 404, { error: "unknown jobId" });
       if (job.status === "done" || job.status === "running" || job.status === "paid")
         return send(res, 409, { error: `job already ${job.status}` });
-      // Replay protection: a signature can pay for exactly one job.
-      const dup = store.findBySignature(body.signature);
-      if (dup) return send(res, 409, { error: "payment signature already used" });
-
-      // The page writes the job id in a memo: requiring it means a transfer seen
-      // on-chain cannot be claimed for someone else's job before its payer does.
-      const result = job.currency === "SOL"
-        ? await verifySolPayment({ signature: body.signature, lamports: solToLamports(job.priceSol), merchant: MERCHANT_WALLET, rpcUrl: SOLANA_RPC_URL, memo: job.id })
-        : await verifyUsdcPayment({ signature: body.signature, amountUsdc: job.priceUsd || PRICE_USD, merchant: MERCHANT_WALLET, rpcUrl: SOLANA_RPC_URL, memo: job.id });
-      if (!result.ok) return send(res, 402, { error: `payment not verified: ${result.reason}` });
-      // Re-check after the await: two concurrent proofs must not both win.
-      if (store.findBySignature(body.signature) || !["pending_payment"].includes(store.get(job.id).status))
-        return send(res, 409, { error: "payment already credited" });
-
-      store.update(job.id, { status: "paid", paidAt: new Date().toISOString(), paymentSignature: body.signature });
-      queue.enqueue(() => runJob(job.id));
-      return send(res, 202, { jobId: job.id, status: "paid", queued: true });
+      const r = await creditWebPayment(job, body.signature);
+      return send(res, r.status, r.body);
     }
 
     if (req.method === "GET" && url.pathname.startsWith("/jobs/")) {
@@ -1196,6 +1229,7 @@ const server = createServer(async (req, res) => {
 });
 
 watcher.start();
+setInterval(watchWebPayments, PAY_WATCH_MS).unref();
 server.listen(PORT, () => {
   console.log(`[server] facilitator lane: ${payaiAuth ? `PayAI ${payaiAuth.label()}` : payaiAuthError ? "public, PAYAI KEY IGNORED" : "public (no key)"}`);
   if (payaiAuthError) console.error(`[server] ERROR PayAI key ignored: ${payaiAuthError}`);
