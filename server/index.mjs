@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import { runScan, parseGithubUrl, fixMailto, WATCHDOG_LOGO, scanDependencies, scanDependenciesBatch, parseCargoLock } from "../bin/scan.mjs";
+import { needsAttention } from "../bin/engine/advisories.mjs";
 import { Store } from "./store.mjs";
 import { Queue } from "./queue.mjs";
 import { sendReport } from "./email.mjs";
@@ -26,7 +27,7 @@ import { Facilitator, SOLANA_MAINNET, encodeHeader, decodeHeader, bazaarExtensio
 import { PayAIAuth } from "./payai-auth.mjs";
 import { Traffic } from "./traffic.mjs";
 import { inspectProgram, isPubkey } from "./program.mjs";
-import { previewOf, reusableFreeJob } from "./free.mjs";
+import { previewOf, reusableFreeJob, PREVIEW_VERSION } from "./free.mjs";
 import { Watcher, checkWebhookUrl, newSecret, programSnapshot, diffProgram, lockfileSnapshot, diffLockfile } from "./watch.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -151,39 +152,38 @@ async function runJob(jobId) {
     const viewToken = randomBytes(24).toString("base64url");
     store.update(jobId, { viewTokenHash: hashToken(viewToken) });
     const viewUrl = `${PUBLIC_BASE}/r/${jobId}/${viewToken}`;
-    // Lead with the on-chain bucket, not the raw total: most of a Solana lockfile
-    // is CLI/test-validator tooling, so a raw count puts an openssl advisory at
-    // the top of the mail and buries the borsh one that actually ships on-chain.
-    const bk = result.deps.buckets;
-    const onchainN = bk.onchain.length;
-    const offchainN = bk.toolchain.length + bk.housekeeping.length;
-    const depN = result.deps.advisories.length;
-    const leadN = [...result.source.byClass.values()].reduce((s, e) => s + e.total, 0);
-    const top = bk.onchain.slice(0, 3).map((a) => `- [${a.severity}] ${a.id} — ${a.summary}`).join("\n");
+    // The mail says what the report says, in the same order: the rating, then what to fix.
+    const m = result.model;
+    const sum = summarize(result);
+    const RISK = { critical: ["Critical", "#b91c1c", "#fde8e8"], high: ["High", "#c2410c", "#fff1e6"], medium: ["Medium", "#a16207", "#fef7dc"], low: ["Low", "#2563eb", "#e8f0fe"], clean: ["No issue found", "#047857", "#e6f7ef"] }[m.risk];
+    const escH = (x) => String(x).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const plain = (x) => String(x).replace(/`/g, "");
+    const top = m.confident.slice(0, 3).map((f) => `- ${f.ref} [${f.severity}] ${plain(f.title)} (${f.file}:${f.line})`).join("\n");
     if (job.email) await sendReport({
       to: job.email,
       subject: `Watchdog checked ${result.meta.owner}/${result.meta.repo}: your report is ready`,
-      text: `Scan complete for ${job.repo}.\n\n${onchainN} advisories on the on-chain surface (crates your deployed program links against), ${offchainN} more on toolchain and unmaintained crates, ${leadN} code leads.\n\nOn-chain advisories:\n${top || "(none — clean on the deployed surface)"}\n\nView your report: ${viewUrl}\nWant the findings fixed? Write to ${CONTACT} with reference ${jobId}.\n\nThe report is also attached.`,
+      text: `Watchdog reviewed ${result.meta.owner}/${result.meta.repo}.\n\nRisk rating: ${RISK[0]}.\n${plain(m.summary)}\n\n${top ? `Issues to fix:\n${top}\n\n` : ""}View your report: ${viewUrl}\nWant the issues fixed? Write to ${CONTACT} with reference ${jobId}.\n\nThe report is also attached.`,
       html: `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:560px;margin:auto;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #eaecf3">
 <div style="background:#160b2e;padding:18px 22px;border-bottom:3px solid #14F195">
 <span style="color:#fff;font-weight:800;letter-spacing:.5px;font-size:16px">SOLANA <span style="color:#14F195">WATCHDOG</span></span>
-<div style="color:#a9b0cf;font-size:12px;margin-top:3px">Dependency &amp; known-class security scan</div></div>
+<div style="color:#a9b0cf;font-size:12px;margin-top:3px">Automated security review</div></div>
 <div style="padding:22px">
-<p style="margin:0 0 12px;font-size:15px;color:#1c2030">Scan complete for <b>${result.meta.owner}/${result.meta.repo}</b>.</p>
-<p style="margin:0 0 14px;color:#1c2030"><b style="font-size:20px">${onchainN}</b> advisories on your <b>on-chain surface</b> &nbsp;&middot;&nbsp; <b style="font-size:20px">${offchainN}</b> on toolchain / unmaintained crates &nbsp;&middot;&nbsp; <b style="font-size:20px">${leadN}</b> code leads</p>
-${top ? `<div style="background:#f7f8fc;border:1px solid #eaecf3;border-radius:10px;padding:12px 14px;font-size:13px;color:#333;white-space:pre-wrap;font-family:ui-monospace,Menlo,monospace">${top.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>` : `<div style="background:#effaf3;border:1px solid #c9eed7;border-radius:10px;padding:12px 14px;font-size:13px;color:#0a7d43;font-weight:600">No advisory affects the crates your deployed program links against.</div>`}
+<p style="margin:0 0 12px;font-size:15px;color:#1c2030">Watchdog reviewed <b>${escH(result.meta.owner)}/${escH(result.meta.repo)}</b>.</p>
+<div style="background:${RISK[2]};border-radius:10px;padding:12px 14px;margin:0 0 14px"><div style="font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${RISK[1]}">Risk rating</div><div style="font-size:22px;font-weight:800;color:${RISK[1]}">${RISK[0]}</div></div>
+<p style="margin:0 0 14px;color:#1c2030"><b style="font-size:20px">${sum.counts.issues}</b> to fix &nbsp;&middot;&nbsp; <b style="font-size:20px">${sum.counts.review}</b> to verify &nbsp;&middot;&nbsp; <b style="font-size:20px">${sum.counts.onchainAdvisoriesNeedingAttention}</b> dependency advisor${sum.counts.onchainAdvisoriesNeedingAttention === 1 ? "y" : "ies"} to act on</p>
+${top ? `<div style="background:#f7f8fc;border:1px solid #eaecf3;border-radius:10px;padding:12px 14px;font-size:13px;color:#333;white-space:pre-wrap">${escH(top)}</div>` : `<div style="background:#effaf3;border:1px solid #c9eed7;border-radius:10px;padding:12px 14px;font-size:13px;color:#0a7d43;font-weight:600">No issue found in the vulnerability classes checked.</div>`}
 <table role="presentation" cellspacing="0" cellpadding="0" style="margin:18px 0 0"><tr>
 <td style="padding:0 8px 8px 0"><a href="${viewUrl}" style="display:inline-block;background:#6d3bd6;color:#ffffff;font-weight:700;text-decoration:none;border-radius:10px;padding:12px 18px">View your report</a></td>
-<td style="padding:0 0 8px 0"><a href="${fixMailto(cta, result.meta, `Fix request: ${result.meta.owner}/${result.meta.repo}`, [`On-chain advisories: ${onchainN}`, `Code leads: ${leadN}`])}" style="display:inline-block;background:#ffffff;color:#6d3bd6;font-weight:700;text-decoration:none;border-radius:10px;padding:11px 17px;border:1px solid #6d3bd6">Get the findings fixed</a></td>
+<td style="padding:0 0 8px 0"><a href="${fixMailto(cta, result.meta, `Fix request: ${result.meta.owner}/${result.meta.repo}`, [`Risk rating: ${RISK[0]}`, `Issues: ${m.confident.map((f) => f.ref).join(", ") || "none"}`])}" style="display:inline-block;background:#ffffff;color:#6d3bd6;font-weight:700;text-decoration:none;border-radius:10px;padding:11px 17px;border:1px solid #6d3bd6">Get them fixed</a></td>
 </tr></table>
 <p style="margin:10px 0 0;color:#5b6178;font-size:13px">The link is private to you. The report is also attached (open the <b>.html</b> in a browser).</p>
-<p style="margin:14px 0 0;color:#8189a3;font-size:12px">A hygiene + known-class scan, not an audit. It does not certify the absence of bugs.</p></div></div>`,
+<p style="margin:14px 0 0;color:#8189a3;font-size:12px">An automated static review, not a manual audit. It does not certify the absence of bugs.</p></div></div>`,
       attachments: [
         { filename: `${result.meta.owner}-${result.meta.repo}-scan.html`, content: Buffer.from(html).toString("base64") },
         { filename: `${result.meta.owner}-${result.meta.repo}-scan.md`, content: Buffer.from(md).toString("base64") },
       ],
     });
-    store.update(jobId, { status: "done", depAdvisories: depN, onchainAdvisories: onchainN, codeLeads: leadN, deliveredAt: new Date().toISOString() });
+    store.update(jobId, { status: "done", risk: m.risk, issues: sum.counts.issues, review: sum.counts.review, onchainAdvisories: sum.counts.onchainAdvisories, deliveredAt: new Date().toISOString() });
   } catch (e) {
     store.update(jobId, { status: "error", error: String(e.message).slice(0, 300) });
     console.error(`[job ${jobId}] failed:`, e.message);
@@ -260,22 +260,36 @@ async function watchWebPayments() {
 // report takes a separate bearer token, handed out once and stored hashed.
 
 function summarize(result) {
-  const bk = result.deps.buckets;
+  const m = result.model;
+  const finding = (f) => ({ ref: f.ref || null, rule: f.rule, severity: f.severity, confidence: f.confidence, title: f.title, file: f.file, line: f.line, struct: f.struct, field: f.field, handlers: f.handlers || [], why: f.why, fix: f.fix, snippet: f.snippet || null });
+  const adv = (a) => ({ id: a.id, aliases: a.aliases, severity: a.severity, summary: a.summary, crates: a.crates, url: a.url, onchain: a.onchain, verdict: a.verdict || null, note: a.note || null });
   return {
     repo: `${result.meta.owner}/${result.meta.repo}`,
     date: result.meta.date,
+    commit: result.meta.ref || null,
+    risk: m.risk,
+    summary: m.summary.replace(/`/g, ""),
+    programs: m.programs,
     counts: {
-      onchainAdvisories: bk.onchain.length,
-      toolchainAdvisories: bk.toolchain.length,
-      unmaintainedCrates: bk.housekeeping.length,
-      codeLeads: [...result.source.byClass.values()].reduce((s, e) => s + e.total, 0),
+      issues: m.confident.length,
+      critical: m.confident.filter((f) => f.severity === "critical").length,
+      high: m.confident.filter((f) => f.severity === "high").length,
+      medium: m.confident.filter((f) => f.severity === "medium").length,
+      review: m.review.length,
+      onchainAdvisories: m.deps.onchain.length,
+      onchainAdvisoriesNeedingAttention: m.deps.onchain.filter(needsAttention).length,
+      offchainAdvisories: m.deps.offchain.length,
+      unmaintainedCrates: m.deps.housekeeping.length,
+      cratesInProgram: m.closure ? m.closure.size : null,
+      cratesInLockfile: m.lockSize,
     },
-    onchainAdvisories: bk.onchain,
-    toolchainAdvisories: bk.toolchain,
-    unmaintainedCrates: bk.housekeeping,
-    hygiene: result.hygiene,
-    codeLeads: [...result.source.byClass.entries()].map(([cls, e]) => ({ class: cls, label: e.label, total: e.total, hits: e.hits })),
-    disclaimer: "A dependency + known-class scan, not an audit. It does not certify the absence of bugs.",
+    findings: m.confident.map(finding),
+    review: m.review.map(finding),
+    deployed: m.deployed.map((d) => ({ programId: d.programId, cluster: d.cluster, authority: d.authority || null, lastDeploy: d.lastDeploy || null, verifiedBuild: d.verifiedBuild || null, securityTxt: !!d.securityTxt, flags: (d.flags || []).map((x) => ({ severity: x.severity, id: x.id, text: x.text })) })),
+    dependencies: { onchain: m.deps.onchain.map(adv), offchain: m.deps.offchain.map(adv), unmaintained: m.deps.housekeeping.map(adv) },
+    coverage: m.coverage.map((c) => ({ rule: c.id, name: c.name, scope: c.scope, toFix: c.confident, toVerify: c.hits - c.confident })),
+    hygiene: m.hygiene,
+    disclaimer: "An automated static review, not a manual audit. It does not certify the absence of bugs.",
   };
 }
 
@@ -1142,7 +1156,9 @@ const server = createServer(async (req, res) => {
       const m = /^\/free\/scan\/([0-9a-f-]{36})$/.exec(url.pathname);
       const job = m && store.get(m[1]);
       if (!job || !job.free) return send(res, 404, { error: "unknown scan" });
-      return send(res, 200, { jobId: job.id, repo: job.repo, status: job.status, ...(job.preview ? { preview: job.preview } : {}), ...(job.status === "error" ? { error: "The scan failed: is the repo public and a Rust / Anchor project?" } : {}), unlockPriceUsd: PRICE_USD, unlockPriceSol: PRICE_SOL });
+      // A preview cached before the current engine is not served: the page could not read it.
+      const stale = job.preview && job.preview.v !== PREVIEW_VERSION;
+      return send(res, 200, { jobId: job.id, repo: job.repo, status: stale ? "expired" : job.status, ...(job.preview && !stale ? { preview: job.preview } : {}), ...(job.status === "error" ? { error: "The scan failed: is the repo public and a Rust / Anchor project?" } : {}), unlockPriceUsd: PRICE_USD, unlockPriceSol: PRICE_SOL });
     }
 
     if (req.method === "POST" && url.pathname === "/scan") {

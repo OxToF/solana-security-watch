@@ -98,17 +98,25 @@ function ProgramCheck() {
   );
 }
 
-function Blurred({ n, kind }) {
-  // Placeholder text only: the real rows never reach the browser.
-  const rows = Array.from({ length: Math.min(n, 3) }, (_, i) => i);
+const RISK = {
+  critical: { label: "Critical risk", tone: "high" }, high: { label: "High risk", tone: "high" },
+  medium: { label: "Medium risk", tone: "medium" }, low: { label: "Low risk", tone: "ok" }, clean: { label: "No issue found", tone: "ok" },
+};
+
+// `code` spans in the engine's text.
+function Md({ text }) {
+  return String(text || "").split(/(`[^`]+`)/).map((part, i) => (part.startsWith("`") && part.endsWith("`") ? <code key={i}>{part.slice(1, -1)}</code> : part));
+}
+
+function Finding({ f, note }) {
   return (
-    <div className="locked">
-      {rows.map((i) => (
-        <div className="blur-row" key={i} aria-hidden="true">
-          {kind === "advisory" ? "RUSTSEC-2026-0000 · crate-name 0.0.0 · summary of the advisory hidden here" : "programs/src/instructions/handler.rs:000 · let account = ctx.accounts.hidden"}
-        </div>
-      ))}
-      <div className="lock-note">🔒 {n} more {kind === "advisory" ? (n === 1 ? "advisory" : "advisories") : (n === 1 ? "code lead" : "code leads")} in the full report</div>
+    <div className="finding">
+      <div className="fhead"><span className={`chip ${sev(f.severity)}`}>{note ? "to verify" : f.severity}</span>{f.ref && <span className="hint">{f.ref}</span>}<span className="hint" style={{ marginLeft: "auto" }}>confidence {f.confidence}</span></div>
+      <div className="ftitle"><Md text={f.title} /></div>
+      <code className="floc">{f.file}:{f.line}</code>
+      {f.snippet && <pre className="fcode">{f.snippet.lines.map((l, k) => <span key={k} className={f.snippet.from + k === f.snippet.focus ? "focus" : ""}>{String(f.snippet.from + k).padStart(4)}  {l}{"\n"}</span>)}</pre>}
+      <p className="hint"><b>Why it matters.</b> <Md text={f.why} /></p>
+      <p className="hint"><b>Fix.</b> <Md text={f.fix} /></p>
     </div>
   );
 }
@@ -139,6 +147,7 @@ function RepoScan() {
         try {
           const s = await (await fetch(j.statusUrl)).json();
           setState(s);
+          if (s.status === "expired") { setBusy(false); return scan(target); } // cached before the current engine
           if (s.status === "done" || s.status === "error") return setBusy(false);
         } catch {}
         poll.current = setTimeout(tick, 3000);
@@ -198,49 +207,61 @@ function RepoScan() {
     finally { setBusy(false); }
   }
 
-  const p = state?.preview;
+  const p = state?.preview?.risk ? state.preview : null;
   return (
     <div className="tool">
-      <p className="tool-lead">Known advisories in its dependencies, build hygiene and known Solana bug classes. <b>The preview is free</b>; the full report with every file and line unlocks for {priceSol} SOL.</p>
+      <p className="tool-lead">Reads the program as Anchor does: every account, constraint and handler, the dependencies that really compile into it, and the deployed program on-chain. <b>The preview is free</b>; the full report unlocks for {priceSol} SOL.</p>
       <div className="row">
         <input className="fld" type="url" placeholder="https://github.com/org/repo" value={repo} onChange={(e) => setRepo(e.target.value)} spellCheck={false} autoCapitalize="off" />
         <button className="btn" onClick={() => scan()} disabled={busy}>{busy && !p ? "Scanning…" : "Free scan"}</button>
       </div>
       <div className="picks">
         <span className="hint">Try:</span>
-        <button type="button" className="pick" disabled={busy} onClick={() => scan("https://github.com/coral-xyz/anchor")}>coral-xyz/anchor</button>
+        <button type="button" className="pick" disabled={busy} onClick={() => scan("https://github.com/OxToF/solana-security-watch")}>planted bugs</button>
         <button type="button" className="pick" disabled={busy} onClick={() => scan("https://github.com/solana-developers/program-examples")}>program-examples</button>
       </div>
       {err && <div className="msg err">{err}</div>}
       {state && !p && state.status !== "error" && <div className="msg">Cloning and scanning. About a minute…</div>}
       {state?.status === "error" && <div className="msg err">{state.error}</div>}
       {p && (
-        <div className="result">
-          <div className="verdict">{p.repo}</div>
+        <div className={`result tone-${RISK[p.risk].tone}`}>
+          <div className="hint">{p.repo}{p.commit ? ` · ${p.commit.slice(0, 7)}` : ""}</div>
+          <div className="verdict"><span className={`dot ${RISK[p.risk].tone}`} />{RISK[p.risk].label}</div>
+          <p className="vline"><Md text={p.summary} /></p>
           <div className="counts">
-            <div><b>{p.counts.onchainAdvisories}</b><span>advisories on the deployed program</span></div>
-            <div><b>{p.counts.toolchainAdvisories + p.counts.unmaintainedCrates}</b><span>in tooling or unmaintained crates</span></div>
-            <div><b>{p.counts.codeLeads}</b><span>code leads to read</span></div>
+            <div><b>{p.counts.issues}</b><span>issue{p.counts.issues === 1 ? "" : "s"} to fix</span></div>
+            <div><b>{p.counts.review}</b><span>to verify</span></div>
+            <div><b>{p.counts.onchainAdvisoriesNeedingAttention}</b><span>dependency advisories to act on</span></div>
           </div>
-          <div className="kv"><span>overflow-checks (release)</span><b>{p.hygiene.overflowChecks === false ? "off: turn it on" : p.hygiene.overflowChecks ? "on" : "not set"}</b></div>
-          <div className="kv"><span>anchor-lang</span><b>{p.hygiene.anchorVersion || "not used"}</b></div>
 
-          <h4>Advisories</h4>
-          {p.shown.advisory ? (
+          {p.shown.finding && <Finding f={p.shown.finding} />}
+          {!p.shown.finding && p.shown.review && <Finding f={p.shown.review} note />}
+          {p.hidden.findings.length > 0 && (
+            <div className="locked">
+              {p.hidden.findings.slice(0, 3).map((h, i) => (
+                <div className="blur-row lockrow" key={i} aria-hidden="true"><span className={`chip ${sev(h.severity)}`}>{h.severity}</span><span className="blurtxt">programs/src/instructions/handler.rs:000 · title of this issue is hidden</span></div>
+              ))}
+              <div className="lock-note">🔒 {p.hidden.findings.length} more issue{p.hidden.findings.length > 1 ? "s" : ""} to fix in the full report ({Object.entries(p.hidden.findings.reduce((c, h) => ({ ...c, [h.severity]: (c[h.severity] || 0) + 1 }), {})).map(([k, n]) => `${n} ${k}`).join(", ")})</div>
+            </div>
+          )}
+
+          {p.deployed.filter((d) => d.cluster).map((d) => (
+            <div className="kv" key={d.programId}><span>Deployed on {d.cluster}</span><b>{d.authority ? (d.authority.kind === "single-key" ? "one key can replace it" : d.authority.kind === "none" ? "immutable" : d.authority.kind) : "unknown"}</b></div>
+          ))}
+          <div className="kv"><span>Vulnerability classes checked</span><b>{p.coverage.length}, {p.coverage.filter((c) => !c.toFix && !c.toVerify).length} clean</b></div>
+          <div className="kv"><span>Crates compiled into the program</span><b>{p.counts.cratesInProgram ?? "?"} of {p.counts.cratesInLockfile}</b></div>
+
+          {p.shown.advisory && (
             <div className="adv"><span className={`chip ${sev(p.shown.advisory.severity)}`}>{p.shown.advisory.severity}</span>
-              <div><a href={p.shown.advisory.url} target="_blank" rel="noreferrer">{p.shown.advisory.id}</a>{p.shown.advisory.onchain && <span className="oc">on-chain</span>}<div className="hint">{p.shown.advisory.summary}</div><div className="hint">{p.shown.advisory.crates.join(", ")}</div></div></div>
-          ) : <div className="msg ok">No known advisory at the pinned versions.</div>}
-          {p.hidden.advisories > 0 && <Blurred n={p.hidden.advisories} kind="advisory" />}
+              <div><a href={p.shown.advisory.url} target="_blank" rel="noreferrer">{p.shown.advisory.id}</a>{p.shown.advisory.onchain && <span className="oc">in the program</span>}<div className="hint">{p.shown.advisory.summary}</div>{p.shown.advisory.note && <div className="hint"><b>{p.shown.advisory.verdict === "not-exploitable" ? "Not exploitable on-chain. " : p.shown.advisory.verdict === "conditional" ? "Depends on your code: " : ""}</b><Md text={p.shown.advisory.note} /></div>}</div></div>
+          )}
+          {p.hidden.advisories > 0 && <div className="lock-note">🔒 {p.hidden.advisories} more dependency advisor{p.hidden.advisories > 1 ? "ies" : "y"}, each judged for on-chain reach, in the full report</div>}
+          {p.hidden.review > 0 && <div className="lock-note">🔒 {p.hidden.review} point{p.hidden.review > 1 ? "s" : ""} to verify, with code and reasoning</div>}
 
-          <h4>Code leads</h4>
-          {p.classes.length ? <div className="classes">{p.classes.map((c) => <span key={c.class} className="cls">{c.label} <b>{c.total}</b></span>)}</div> : <div className="msg ok">No known bug-class pattern matched.</div>}
-          {p.shown.lead && <div className="lead"><code>{p.shown.lead.file}:{p.shown.lead.line}</code><pre>{p.shown.lead.text}</pre></div>}
-          {p.hidden.leads > 0 && <Blurred n={p.hidden.leads} kind="lead" />}
-
-          {(p.hidden.advisories > 0 || p.hidden.leads > 0) && (
+          {(p.hidden.findings.length > 0 || p.hidden.advisories > 0 || p.hidden.review > 0) && (
             <div className="unlock">
               <h4>Unlock the full report: {priceSol} SOL</h4>
-              <p className="hint">Every advisory and every lead with file and line, by email, as a page you can share with your team.</p>
+              <p className="hint">Every issue with its code, why it is exploitable and how to fix it, the deployed program, and every dependency judged for on-chain reach. By email, as a page you can share with your team.</p>
               <div className="connect-row"><WalletMultiButton /></div>
               <input className="fld" type="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
               <button className="btn pay" onClick={() => unlock("SOL")} disabled={busy}>{busy ? "Working…" : `Pay ${priceSol} SOL`}</button>

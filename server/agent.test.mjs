@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { verifyFromTx, verifySolFromTx, solToLamports, memosOf, USDC_MINT, MEMO_PROGRAM_ID } from "./verify.mjs";
 import { routeOf } from "./traffic.mjs";
 import { encodeHeader, decodeHeader, SOLANA_MAINNET } from "./x402.mjs";
-import { previewOf, reusableFreeJob } from "./free.mjs";
+import { previewOf, reusableFreeJob, PREVIEW_VERSION } from "./free.mjs";
 
 const MERCHANT = "7yMnWMrxzZ3YCtWXRsZEhAFwexHoJzBJy8RgN7Lhvy1P";
 const SIG_OK = "5".repeat(88);
@@ -140,6 +140,7 @@ before(async () => {
       ...process.env,
       PORT: String(port),
       JOBS_FILE: join(dir, "jobs.json"),
+      DELIVERIES_DIR: join(dir, "deliveries"),
       MERCHANT_WALLET: MERCHANT,
       SOLANA_RPC_URL: `http://127.0.0.1:${rpc.address().port}`,
       FACILITATOR_URL: `http://127.0.0.1:${fac.address().port}`,
@@ -148,6 +149,8 @@ before(async () => {
       OSV_VULNS_URL: `http://127.0.0.1:${osv.address().port}/v1/vulns`,
       SCAN_PRICE_USD: "69",
       SCAN_PRICE_SOL: "0.1",
+      SOLANA_DEVNET_RPC_URL: `http://127.0.0.1:${rpc.address().port}`,
+      CRATES_INDEX_URL: "http://127.0.0.1:1",
       PAY_WATCH_MS: "100",
       ALLOW_ORIGIN: "https://site.example, https://alias.example/",
       ALLOW_LOCAL: "1",
@@ -579,41 +582,39 @@ test("a 400 on a placeholder or broken body still carries the terms; a paid atte
 
 // --- free tier ------------------------------------------------------------------
 
-const adv = (id, severity, onchain = false) => ({ id, url: `https://osv.dev/${id}`, severity, summary: `${id} summary`, crates: ["x 1.0"], onchain });
+const adv = (id, verdict = null) => ({ id, severity: "HIGH", summary: `${id} summary`, crates: ["x 1.0"], url: `https://osv.dev/${id}`, onchain: true, verdict });
+const fnd = (ref, severity, secret) => ({ ref, rule: "r", severity, confidence: "medium", title: `${secret} title`, file: "a.rs", line: 1, why: secret, fix: secret, snippet: { from: 1, focus: 1, lines: [secret] } });
 const SUMMARY = {
-  repo: "o/r", date: "2026-10-12",
-  counts: { onchainAdvisories: 2, toolchainAdvisories: 1, unmaintainedCrates: 1, codeLeads: 5 },
-  onchainAdvisories: [adv("LOW-1", "LOW", true), adv("HIGH-1", "HIGH", true)],
-  toolchainAdvisories: [adv("CRIT-T", "CRITICAL")],
-  unmaintainedCrates: [adv("UNM-1", "INFO")],
-  hygiene: { overflowChecks: false, anchorVersion: "0.29.0" },
-  codeLeads: [
-    { class: "a", label: "Class A", total: 1, hits: [{ file: "a.rs", line: 1, text: "secret-a" }] },
-    { class: "b", label: "Class B", total: 4, hits: [{ file: "b.rs", line: 7, text: "first-b" }, { file: "b.rs", line: 9, text: "second-b" }] },
-  ],
-  disclaimer: "not an audit",
+  repo: "o/r", date: "2026-10-12", commit: "abc1234", risk: "critical", summary: "s", programs: [{ name: "p" }],
+  counts: { issues: 3 }, coverage: [{ rule: "r" }], deployed: [], hygiene: {},
+  findings: [fnd("W-01", "critical", "shown-one"), fnd("W-02", "high", "secret-two"), fnd("W-03", "medium", "secret-three")],
+  review: [fnd(null, "low", "secret-note")],
+  dependencies: { onchain: [adv("CLEARED", "not-exploitable"), adv("LIVE")], offchain: [adv("OFF-SECRET")], unmaintained: [] },
+  disclaimer: "d",
 };
 
-test("free preview: counts and classes, one advisory and one lead, nothing else leaves the server", () => {
+test("free preview: rating, counts, coverage and the first issue; the rest is only a severity", () => {
   const p = previewOf(SUMMARY);
-  assert.deepEqual(p.counts, SUMMARY.counts);
-  // The worst ON-CHAIN advisory is shown, not the critical toolchain one.
-  assert.equal(p.shown.advisory.id, "HIGH-1");
-  // The lead comes from the class with the most hits, with its file and line.
-  assert.deepEqual(p.shown.lead, { class: "b", label: "Class B", file: "b.rs", line: 7, text: "first-b" });
-  assert.deepEqual(p.classes.map((c) => [c.class, c.total]), [["b", 4], ["a", 1]]);
-  assert.deepEqual(p.hidden, { advisories: 3, leads: 4 });
+  assert.equal(p.risk, "critical");
+  assert.equal(p.shown.finding.ref, "W-01");
+  assert.equal(p.shown.advisory.id, "LIVE"); // the one that needs attention, not the cleared one
+  assert.deepEqual(p.hidden.findings, [{ severity: "high" }, { severity: "medium" }]);
+  assert.equal(p.hidden.review, 1);
+  assert.equal(p.hidden.advisories, 2);
   const wire = JSON.stringify(p);
-  for (const secret of ["LOW-1", "CRIT-T", "UNM-1", "secret-a", "second-b"]) assert.ok(!wire.includes(secret), `${secret} leaked`);
-  // A clean repo shows nothing and hides nothing.
-  const clean = previewOf({ ...SUMMARY, onchainAdvisories: [], toolchainAdvisories: [], unmaintainedCrates: [], codeLeads: [] });
-  assert.deepEqual(clean.shown, { advisory: null, lead: null });
-  assert.deepEqual(clean.hidden, { advisories: 0, leads: 0 });
+  for (const secret of ["secret-two", "secret-three", "secret-note", "OFF-SECRET"]) assert.ok(!wire.includes(secret), `${secret} leaked`);
+  // Nothing to fix: the first note to verify is shown instead.
+  const calm = previewOf({ ...SUMMARY, findings: [] });
+  assert.equal(calm.shown.finding, null);
+  assert.equal(calm.shown.review.title, "secret-note title");
+  assert.equal(calm.hidden.review, 0);
 });
 
 test("free preview reuse: same repo, done, recent", () => {
   const now = Date.parse("2026-10-12T12:00:00Z");
-  const j = { free: true, repo: "r", status: "done", preview: {}, updatedAt: "2026-10-12T10:00:00Z" };
+  const j = { free: true, repo: "r", status: "done", preview: { v: PREVIEW_VERSION }, updatedAt: "2026-10-12T10:00:00Z" };
+  // A preview from an older engine is rescanned, never served.
+  assert.equal(reusableFreeJob([{ ...j, preview: {} }], "r", now), null);
   assert.equal(reusableFreeJob([j], "r", now), j);
   assert.equal(reusableFreeJob([j], "other", now), null);
   assert.equal(reusableFreeJob([{ ...j, updatedAt: "2026-10-12T00:00:00Z" }], "r", now), null);
@@ -640,9 +641,12 @@ test("free tier end to end: program check without payment, repo preview, rate li
     await new Promise((r) => setTimeout(r, 100));
   }
   assert.equal(view.status, "done", JSON.stringify(view));
-  assert.ok(view.preview.counts && view.preview.hidden);
+  // The PoC's planted bug comes out as the first issue, in full; nothing else ships.
+  assert.equal(view.preview.risk, "high");
+  assert.equal(view.preview.shown.finding.rule, "duplicate-mutable-accounts");
+  assert.match(view.preview.shown.finding.fix, /require_keys_neq|key\(\) !=/);
+  assert.equal(view.preview.findings, undefined);
   assert.equal(view.unlockPriceUsd, 69);
-  assert.equal(view.preview.codeLeads, undefined); // the full list never ships
 
   // Done and recent: the same repo is answered from that run, not re-scanned.
   const again = await call("/free/scan", { local });

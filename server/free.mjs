@@ -2,40 +2,43 @@
 //
 // A program check is given whole: it is the question a phone user actually has
 // ("who can change this program tomorrow?") and costs a few RPC calls.
-// A repo scan runs for real, but only a preview leaves the server: every count,
-// the build hygiene, the bug classes found, and ONE advisory and ONE code lead in
-// full. The rest is never sent, so the blur in the page hides nothing a curious
-// visitor could read from the network tab.
+// A repo scan runs for real, but only a preview leaves the server: the risk rating
+// and its summary, every count, the coverage table, the deployed program, and the
+// FIRST issue in full. The other issues travel as their severity alone, so the blur
+// in the page hides nothing a curious visitor could read from the network tab.
 
-const SEV_RANK = { CRITICAL: 5, HIGH: 4, MODERATE: 3, MEDIUM: 3, LOW: 2 };
-const sevRank = (s) => SEV_RANK[String(s || "").toUpperCase().split(" ")[0]] || 1;
-
-const advisoryView = (a) => ({ id: a.id, url: a.url, severity: a.severity, summary: a.summary, crates: a.crates, onchain: !!a.onchain });
+// Bumped whenever the preview's shape changes: an older cached preview is rescanned
+// rather than served to a page that cannot read it.
+export const PREVIEW_VERSION = 2;
 
 // `summary` is the object summarize() builds from a scan result.
 export function previewOf(summary) {
-  const on = [...summary.onchainAdvisories].sort((a, b) => sevRank(b.severity) - sevRank(a.severity));
-  const off = [...summary.toolchainAdvisories, ...summary.unmaintainedCrates].sort((a, b) => sevRank(b.severity) - sevRank(a.severity));
-  // Show the advisory that matters most: the worst on the deployed surface, else the worst elsewhere.
-  const shownAdvisory = on[0] || off[0] || null;
-  const advisoriesTotal = on.length + off.length;
-
-  const classes = [...summary.codeLeads].sort((a, b) => b.total - a.total);
-  const top = classes.find((c) => c.hits.length);
-  const shownLead = top ? { class: top.class, label: top.label, ...top.hits[0] } : null;
-  const leadsTotal = classes.reduce((s, c) => s + c.total, 0);
-
+  const [first, ...rest] = summary.findings;
+  const attention = summary.dependencies.onchain.filter((a) => a.verdict !== "not-exploitable");
+  const shownAdvisory = attention[0] || summary.dependencies.onchain[0] || null;
+  const totalAdvisories = summary.dependencies.onchain.length + summary.dependencies.offchain.length + summary.dependencies.unmaintained.length;
   return {
+    v: PREVIEW_VERSION,
     repo: summary.repo,
     date: summary.date,
+    commit: summary.commit,
+    risk: summary.risk,
+    summary: summary.summary,
+    programs: summary.programs,
     counts: summary.counts,
+    coverage: summary.coverage,
+    deployed: summary.deployed,
     hygiene: summary.hygiene,
-    // Which classes were hit and how often, without where.
-    classes: classes.map((c) => ({ class: c.class, label: c.label, total: c.total })),
-    shown: { advisory: shownAdvisory && advisoryView(shownAdvisory), lead: shownLead },
+    shown: {
+      finding: first || null,
+      // With nothing to fix, the first note to verify is what proves the reading is real.
+      review: first ? null : summary.review[0] || null,
+      advisory: shownAdvisory,
+    },
     hidden: {
-      advisories: Math.max(0, advisoriesTotal - (shownAdvisory ? 1 : 0)),
-      leads: Math.max(0, leadsTotal - (shownLead ? 1 : 0)),
+      findings: rest.map((f) => ({ severity: f.severity })),
+      review: Math.max(0, summary.review.length - (first ? 0 : summary.review.length ? 1 : 0)),
+      advisories: Math.max(0, totalAdvisories - (shownAdvisory ? 1 : 0)),
     },
     disclaimer: summary.disclaimer,
   };
@@ -45,5 +48,5 @@ export function previewOf(summary) {
 // the same visitor (or a reviewer) retrying costs nothing, and nothing changed.
 export const FREE_SCAN_REUSE_MS = 6 * 60 * 60 * 1000;
 export function reusableFreeJob(jobs, repo, now = Date.now()) {
-  return jobs.find((j) => j.free && j.repo === repo && j.status === "done" && j.preview && now - Date.parse(j.updatedAt) < FREE_SCAN_REUSE_MS) || null;
+  return jobs.find((j) => j.free && j.repo === repo && j.status === "done" && j.preview && j.preview.v === PREVIEW_VERSION && now - Date.parse(j.updatedAt) < FREE_SCAN_REUSE_MS) || null;
 }
