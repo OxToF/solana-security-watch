@@ -73,7 +73,7 @@ Then point the landing page at it: set `window.SSW_ENDPOINT = "https://your-back
 | `PORT` | listen port (default 8787) |
 | `ADMIN_TOKEN` | bearer token for `/confirm` and `/admin/jobs` (required to confirm) |
 | `PAY_INSTRUCTIONS` | text shown to the buyer after `/scan` (USDC address / Stripe link) |
-| `SCAN_PRICE_USD` | web price, a human with a branded report by email (default 80) |
+| `SCAN_PRICE_USD` | web price, a human unlocking the full report after the free preview (default 9) |
 | `AGENT_SCAN_PRICE_USD` | agent price of `/agent/scan` (default 0.5) |
 | `CHECK_PRICE_USD` | price of one `/agent/check` request (default 0.01) |
 | `OSV_QUERY_URL` | advisory database endpoint (default OSV; tests point it at a fake) |

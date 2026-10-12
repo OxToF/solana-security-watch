@@ -1,19 +1,8 @@
 import React, { useState } from "react";
-import { useConnection, useWallet } from "@solana/wallet-adapter-react";
-import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
-import { PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js";
-import {
-  getAssociatedTokenAddressSync,
-  createTransferCheckedInstruction,
-  createAssociatedTokenAccountIdempotentInstruction,
-} from "@solana/spl-token";
+import FreeTools from "./FreeTools.jsx";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "https://solana-security-watchdog-scan.fly.dev";
 const EVM_BASE = import.meta.env.VITE_EVM_API_BASE || "https://evm-watchdog-scan.fly.dev";
-const WALLET = import.meta.env.VITE_MERCHANT_WALLET || "7yMnWMrxzZ3YCtWXRsZEhAFwexHoJzBJy8RgN7Lhvy1P";
-const AMOUNT = Number(import.meta.env.VITE_AMOUNT_USDC || 69);
-const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
-const MEMO_PROGRAM = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
 
 // Launched from the Android app (Seeker / Solana dApp Store): its start URL
 // carries ?app=seeker, and a Trusted Web Activity runs in standalone mode.
@@ -22,8 +11,6 @@ const IN_APP =
   (new URLSearchParams(window.location.search).get("app") === "seeker" ||
     window.matchMedia?.("(display-mode: standalone)").matches);
 
-const isRepo = (s) => /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/.test(s);
-const isEmail = (s) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s);
 
 const MCP_CMD = "claude mcp add watchdog -e WATCHDOG_SOLANA_PRIVATE_KEY=<base58 key> -e WATCHDOG_EVM_PRIVATE_KEY=<hex key> -- npx -y watchdog-mcp";
 const MCP_JSON = `{
@@ -110,77 +97,6 @@ function Code({ text, label }) {
 }
 
 export default function App() {
-  const { connection } = useConnection();
-  const { publicKey, sendTransaction, connected } = useWallet();
-  const [repo, setRepo] = useState("");
-  const [email, setEmail] = useState("");
-  const [msg, setMsg] = useState(null); // { kind, text }
-  const [busy, setBusy] = useState(false);
-
-  async function pay() {
-    setMsg(null);
-    if (!isRepo(repo)) return setMsg({ kind: "err", text: "Enter a valid https://github.com/org/repo URL (public repo)." });
-    if (!isEmail(email)) return setMsg({ kind: "err", text: "Enter a valid email." });
-    if (!connected || !publicKey) return setMsg({ kind: "err", text: "Connect your wallet first (button above)." });
-
-    setBusy(true);
-    try {
-      setMsg({ kind: "", text: "Creating your scan order..." });
-      const r = await fetch(`${API_BASE}/scan`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ repo, email }),
-      });
-      if (!r.ok) throw new Error("Could not create the order. Try again.");
-      const { jobId } = await r.json();
-
-      const mint = new PublicKey(USDC_MINT);
-      const merchant = new PublicKey(WALLET);
-      const payerAta = getAssociatedTokenAddressSync(mint, publicKey);
-      const merchantAta = getAssociatedTokenAddressSync(mint, merchant);
-      const base = BigInt(Math.round(AMOUNT * 1e6)); // USDC = 6 decimals
-
-      const tx = new Transaction().add(
-        createAssociatedTokenAccountIdempotentInstruction(publicKey, merchantAta, merchant, mint),
-        createTransferCheckedInstruction(payerAta, mint, merchantAta, publicKey, base, 6),
-        new TransactionInstruction({ keys: [], programId: new PublicKey(MEMO_PROGRAM), data: Buffer.from(jobId) })
-      );
-
-      setMsg({ kind: "", text: `Approve the ${AMOUNT} USDC payment in your wallet...` });
-      // wallet-adapter fills the blockhash + fee payer, signs, and sends via the RPC.
-      const signature = await sendTransaction(tx, connection);
-
-      setMsg({ kind: "", text: "Payment sent. Verifying on-chain and starting your scan..." });
-      const v = await fetch(`${API_BASE}/pay/verify`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ jobId, signature }),
-      });
-      if (!v.ok) {
-        const e = await v.json().catch(() => ({}));
-        throw new Error(`Payment sent but verification failed: ${e.error || "unknown"}. Keep this signature: ${signature}`);
-      }
-      setMsg({ kind: "ok", text: `Paid. Your report will arrive by email shortly. Signature: ${signature}` });
-      setRepo(""); setEmail("");
-    } catch (err) {
-      setMsg({ kind: "err", text: err?.message || "Payment failed or was cancelled." });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const scanBox = (
-    <div className="scanbox">
-      <div className="connect-row"><WalletMultiButton /></div>
-      <input className="fld" type="url" placeholder="https://github.com/your-org/your-repo" value={repo} onChange={(e) => setRepo(e.target.value)} />
-      <input className="fld" type="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
-      <button className="btn pay" onClick={pay} disabled={busy}>{busy ? "Working..." : `Pay ${AMOUNT} USDC & scan`}</button>
-      <div className="price">Scan and emailed report, <b>{AMOUNT} USDC</b> on Solana. Public repo only.</div>
-      {msg && <div className={`msg ${msg.kind}`}>{msg.text}</div>}
-      <div className="hint">We only clone public code, never your secrets.</div>
-    </div>
-  );
-
   const scope = (
     <section>
       <div className="scope">
@@ -189,8 +105,9 @@ export default function App() {
     </section>
   );
 
-  // The phone app sells the one thing a person buys from a phone: the paid scan,
-  // signed with the wallet on the device. The agent pages stay on the website.
+  // The phone app is for a person checking before they put money in: the program
+  // check is free, a repo scan shows a free preview, the full report is paid with
+  // the wallet on the device. The agent pages stay on the website.
   if (IN_APP) {
     return (
       <div className="wrap app">
@@ -198,9 +115,9 @@ export default function App() {
           <div className="brand"><Logo size={34} /><span className="bt"><span className="g">Watchdog</span></span><span className="chains">Solana</span></div>
         </header>
         <section id="browser">
-          <h1>Scan a Solana repo before you trust it</h1>
-          <p className="lead">Upgrade paths, known advisories in its dependencies, build hygiene and known bug classes with file and line. Connect your wallet, pay in USDC, and the report lands in your inbox.</p>
-          {scanBox}
+          <h1>Check a Solana program before you put money in</h1>
+          <p className="lead">See who can change a program's code, and how fast, in seconds. Scan the source of a project for known vulnerabilities. Both are free to try.</p>
+          <FreeTools />
         </section>
         {scope}
         <footer>Solana Watchdog. Open source under the MIT license. Checks, not a certified audit. <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a></footer>
@@ -289,9 +206,9 @@ export default function App() {
       </section>
 
       <section id="browser">
-        <h2>Prefer a browser?</h2>
-        <p className="lead">Run the full scan of a public Rust / Anchor repo yourself. Connect a Solana wallet, pay in USDC, and receive a branded report by email.</p>
-        {scanBox}
+        <h2>Try it in your browser</h2>
+        <p className="lead">Check who controls any Solana program, free. Scan a public Rust / Anchor repo and get a free preview; the full report with every file and line unlocks in USDC.</p>
+        <FreeTools />
       </section>
 
       {scope}

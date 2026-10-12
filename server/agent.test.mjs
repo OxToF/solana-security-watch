@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { verifyFromTx, memosOf, USDC_MINT, MEMO_PROGRAM_ID } from "./verify.mjs";
 import { routeOf } from "./traffic.mjs";
 import { encodeHeader, decodeHeader, SOLANA_MAINNET } from "./x402.mjs";
+import { previewOf, reusableFreeJob } from "./free.mjs";
 
 const MERCHANT = "7yMnWMrxzZ3YCtWXRsZEhAFwexHoJzBJy8RgN7Lhvy1P";
 const SIG_OK = "5".repeat(88);
@@ -137,6 +138,8 @@ before(async () => {
       OSV_BATCH_URL: `http://127.0.0.1:${osv.address().port}/v1/querybatch`,
       OSV_VULNS_URL: `http://127.0.0.1:${osv.address().port}/v1/vulns`,
       SCAN_PRICE_USD: "69",
+      ALLOW_LOCAL: "1",
+      FREE_SCANS_PER_HOUR: "2",
       PUBLIC_BASE_URL: base,
       RESEND_API_KEY: "",
       ADMIN_TOKEN: "test-admin",
@@ -560,4 +563,85 @@ test("a 400 on a placeholder or broken body still carries the terms; a paid atte
   assert.equal(paid.headers.get("payment-required"), null, "no terms on a request that already pays");
   const other = await fetch(`${base}/agent/jobs/not-a-job`, { headers: h });
   assert.equal(other.headers.get("payment-required"), null, "only paid endpoints carry terms");
+});
+
+// --- free tier ------------------------------------------------------------------
+
+const adv = (id, severity, onchain = false) => ({ id, url: `https://osv.dev/${id}`, severity, summary: `${id} summary`, crates: ["x 1.0"], onchain });
+const SUMMARY = {
+  repo: "o/r", date: "2026-10-12",
+  counts: { onchainAdvisories: 2, toolchainAdvisories: 1, unmaintainedCrates: 1, codeLeads: 5 },
+  onchainAdvisories: [adv("LOW-1", "LOW", true), adv("HIGH-1", "HIGH", true)],
+  toolchainAdvisories: [adv("CRIT-T", "CRITICAL")],
+  unmaintainedCrates: [adv("UNM-1", "INFO")],
+  hygiene: { overflowChecks: false, anchorVersion: "0.29.0" },
+  codeLeads: [
+    { class: "a", label: "Class A", total: 1, hits: [{ file: "a.rs", line: 1, text: "secret-a" }] },
+    { class: "b", label: "Class B", total: 4, hits: [{ file: "b.rs", line: 7, text: "first-b" }, { file: "b.rs", line: 9, text: "second-b" }] },
+  ],
+  disclaimer: "not an audit",
+};
+
+test("free preview: counts and classes, one advisory and one lead, nothing else leaves the server", () => {
+  const p = previewOf(SUMMARY);
+  assert.deepEqual(p.counts, SUMMARY.counts);
+  // The worst ON-CHAIN advisory is shown, not the critical toolchain one.
+  assert.equal(p.shown.advisory.id, "HIGH-1");
+  // The lead comes from the class with the most hits, with its file and line.
+  assert.deepEqual(p.shown.lead, { class: "b", label: "Class B", file: "b.rs", line: 7, text: "first-b" });
+  assert.deepEqual(p.classes.map((c) => [c.class, c.total]), [["b", 4], ["a", 1]]);
+  assert.deepEqual(p.hidden, { advisories: 3, leads: 4 });
+  const wire = JSON.stringify(p);
+  for (const secret of ["LOW-1", "CRIT-T", "UNM-1", "secret-a", "second-b"]) assert.ok(!wire.includes(secret), `${secret} leaked`);
+  // A clean repo shows nothing and hides nothing.
+  const clean = previewOf({ ...SUMMARY, onchainAdvisories: [], toolchainAdvisories: [], unmaintainedCrates: [], codeLeads: [] });
+  assert.deepEqual(clean.shown, { advisory: null, lead: null });
+  assert.deepEqual(clean.hidden, { advisories: 0, leads: 0 });
+});
+
+test("free preview reuse: same repo, done, recent", () => {
+  const now = Date.parse("2026-10-12T12:00:00Z");
+  const j = { free: true, repo: "r", status: "done", preview: {}, updatedAt: "2026-10-12T10:00:00Z" };
+  assert.equal(reusableFreeJob([j], "r", now), j);
+  assert.equal(reusableFreeJob([j], "other", now), null);
+  assert.equal(reusableFreeJob([{ ...j, updatedAt: "2026-10-12T00:00:00Z" }], "r", now), null);
+  assert.equal(reusableFreeJob([{ ...j, free: false }], "r", now), null);
+});
+
+test("free tier end to end: program check without payment, repo preview, rate limit, never payable", async () => {
+  const call = (path, body) => fetch(`${base}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  assert.equal((await call("/free/program", { programId: "nope" })).status, 400);
+  // The fake RPC knows no account: an honest 404, no payment asked.
+  const miss = await call("/free/program", { programId: MERCHANT });
+  assert.equal(miss.status, 404);
+  assert.equal(miss.headers.get("payment-required"), null);
+
+  assert.equal((await call("/free/scan", { repo: "not a repo" })).status, 400);
+  const local = join(dirname(fileURLToPath(import.meta.url)), "..", "poc", "duplicate-mutable");
+  const q = await call("/free/scan", { local });
+  assert.equal(q.status, 202);
+  const { jobId, statusUrl } = await q.json();
+  let view;
+  for (let i = 0; i < 300; i++) {
+    view = await (await fetch(statusUrl)).json();
+    if (view.status === "done" || view.status === "error") break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  assert.equal(view.status, "done", JSON.stringify(view));
+  assert.ok(view.preview.counts && view.preview.hidden);
+  assert.equal(view.unlockPriceUsd, 69);
+  assert.equal(view.preview.codeLeads, undefined); // the full list never ships
+
+  // Done and recent: the same repo is answered from that run, not re-scanned.
+  const again = await call("/free/scan", { local });
+  assert.equal(again.status, 200);
+  assert.equal((await again.json()).jobId, jobId);
+
+  // A free job cannot be turned into a paid one.
+  const confirm = await fetch(`${base}/confirm`, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer test-admin" }, body: JSON.stringify({ jobId }) });
+  assert.equal(confirm.status, 404);
+
+  // FREE_SCANS_PER_HOUR=2 in this server: the third new repo is refused.
+  assert.equal((await call("/free/scan", { local: `${local}/` })).status, 202);
+  assert.equal((await call("/free/scan", { local: `${local}//` })).status, 429);
 });
