@@ -26,11 +26,17 @@ import { Facilitator, SOLANA_MAINNET, encodeHeader, decodeHeader, bazaarExtensio
 import { PayAIAuth } from "./payai-auth.mjs";
 import { Traffic } from "./traffic.mjs";
 import { inspectProgram, isPubkey } from "./program.mjs";
+import { previewOf, reusableFreeJob } from "./free.mjs";
 import { Watcher, checkWebhookUrl, newSecret, programSnapshot, diffProgram, lockfileSnapshot, diffLockfile } from "./watch.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
-const PRICE_USD = Number(process.env.SCAN_PRICE_USD || 80); // web: a human, a branded report by email
+const PRICE_USD = Number(process.env.SCAN_PRICE_USD || 9); // web: a human unlocks the full branded report by email
+// Free tier, per visitor: a few repo previews an hour, program checks more freely.
+// A free scan shares the queue with paid ones, so past a few waiting it is refused.
+const FREE_SCANS_PER_HOUR = Number(process.env.FREE_SCANS_PER_HOUR || 3);
+const FREE_PROGRAMS_PER_HOUR = Number(process.env.FREE_PROGRAMS_PER_HOUR || 30);
+const FREE_QUEUE_MAX = Number(process.env.FREE_QUEUE_MAX || 6);
 // Agents buy per request, at volume: both prices sit under the $1 per-payment cap
 // x402 clients ship with, so an agent on default settings can pay without a human.
 // A PayAI settlement costs about $0.0015 on Solana, so a cent still clears it.
@@ -172,6 +178,21 @@ ${top ? `<div style="background:#f7f8fc;border:1px solid #eaecf3;border-radius:1
   } catch (e) {
     store.update(jobId, { status: "error", error: String(e.message).slice(0, 300) });
     console.error(`[job ${jobId}] failed:`, e.message);
+  }
+}
+
+// --- free scan: the scan runs, only a preview is kept and served ---
+async function runFreeJob(jobId) {
+  const job = store.get(jobId);
+  if (!job) return;
+  store.update(jobId, { status: "running" });
+  try {
+    const out = mkdtempSync(join(tmpdir(), "ssw-free-"));
+    const result = await runScan(job.local && ALLOW_LOCAL ? { localPath: job.local, out } : { repoUrl: job.repo, out });
+    store.update(jobId, { status: "done", preview: previewOf(summarize(result)) });
+  } catch (e) {
+    store.update(jobId, { status: "error", error: String(e.message).slice(0, 300) });
+    console.error(`[free ${jobId}] failed:`, e.message);
   }
 }
 
@@ -1029,6 +1050,43 @@ const server = createServer(async (req, res) => {
       return send(res, 200, readFileSync(f, "utf8"), { "content-type": types[m[2]] });
     }
 
+    // --- free tier (no wallet, no email) ---
+    if (req.method === "POST" && url.pathname === "/free/program") {
+      if (rateLimited(`free-program:${ip}`, FREE_PROGRAMS_PER_HOUR, 3600_000)) return send(res, 429, { error: "Free checks are limited per hour. Try again later." });
+      const body = await readBody(req);
+      if (!isPubkey(body.programId)) return send(res, 400, { error: "Enter a Solana program address (base58)." });
+      let r;
+      try { r = await inspectProgram(body.programId, { rpc: programRpc }); }
+      catch { return send(res, 502, { error: "Solana mainnet did not answer. Try again in a minute." }); }
+      if (!r.exists || !r.executable) return send(res, r.exists ? 422 : 404, { error: r.flags[0].text });
+      return send(res, 200, { ...r, disclaimer: "Who controls this program and what can be verified about it. Not an audit of its code." });
+    }
+
+    if (req.method === "POST" && url.pathname === "/free/scan") {
+      const body = await readBody(req);
+      const isLocal = body.local && ALLOW_LOCAL;
+      let repo;
+      if (isLocal) repo = `local:${body.local}`;
+      else {
+        try { repo = parseGithubUrl(body.repo || "").url; }
+        catch (e) { return send(res, 400, { error: e.message }); }
+      }
+      const reuse = reusableFreeJob(store.list(), repo);
+      if (reuse) return send(res, 200, { jobId: reuse.id, status: reuse.status, statusUrl: `${PUBLIC_BASE}/free/scan/${reuse.id}` });
+      if (rateLimited(`free-scan:${ip}`, FREE_SCANS_PER_HOUR, 3600_000)) return send(res, 429, { error: `Free previews are limited to ${FREE_SCANS_PER_HOUR} an hour. Try again later.` });
+      if (queue.tasks.length >= FREE_QUEUE_MAX) return send(res, 503, { error: "The scanner is busy. Try again in a few minutes." });
+      const job = store.create({ repo, local: isLocal ? body.local : undefined, free: true, priceUsd: 0, status: "queued" });
+      queue.enqueue(() => runFreeJob(job.id));
+      return send(res, 202, { jobId: job.id, status: job.status, statusUrl: `${PUBLIC_BASE}/free/scan/${job.id}` });
+    }
+
+    if (req.method === "GET" && url.pathname.startsWith("/free/scan/")) {
+      const m = /^\/free\/scan\/([0-9a-f-]{36})$/.exec(url.pathname);
+      const job = m && store.get(m[1]);
+      if (!job || !job.free) return send(res, 404, { error: "unknown scan" });
+      return send(res, 200, { jobId: job.id, repo: job.repo, status: job.status, ...(job.preview ? { preview: job.preview } : {}), ...(job.status === "error" ? { error: "The scan failed: is the repo public and a Rust / Anchor project?" } : {}), unlockPriceUsd: PRICE_USD });
+    }
+
     if (req.method === "POST" && url.pathname === "/scan") {
       if (rateLimited(ip)) return send(res, 429, { error: "rate limited" });
       const body = await readBody(req);
@@ -1060,7 +1118,7 @@ const server = createServer(async (req, res) => {
       if (auth !== `Bearer ${ADMIN_TOKEN}`) return send(res, 401, { error: "unauthorized" });
       const body = await readBody(req);
       const job = store.get(body.jobId);
-      if (!job) return send(res, 404, { error: "unknown jobId" });
+      if (!job || job.free) return send(res, 404, { error: "unknown jobId" });
       if (job.status === "done" || job.status === "running")
         return send(res, 409, { error: `job already ${job.status}` });
       store.update(job.id, { status: "paid", paidAt: new Date().toISOString() });
@@ -1073,7 +1131,7 @@ const server = createServer(async (req, res) => {
       if (rateLimited(ip)) return send(res, 429, { error: "rate limited" });
       const body = await readBody(req);
       const job = store.get(body.jobId);
-      if (!job) return send(res, 404, { error: "unknown jobId" });
+      if (!job || job.free) return send(res, 404, { error: "unknown jobId" });
       if (job.status === "done" || job.status === "running" || job.status === "paid")
         return send(res, 409, { error: `job already ${job.status}` });
       // Replay protection: a signature can pay for exactly one job.
