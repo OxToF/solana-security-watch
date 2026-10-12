@@ -10,7 +10,7 @@ import { createHmac } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { verifyFromTx, memosOf, USDC_MINT, MEMO_PROGRAM_ID } from "./verify.mjs";
+import { verifyFromTx, verifySolFromTx, solToLamports, memosOf, USDC_MINT, MEMO_PROGRAM_ID } from "./verify.mjs";
 import { routeOf } from "./traffic.mjs";
 import { encodeHeader, decodeHeader, SOLANA_MAINNET } from "./x402.mjs";
 import { previewOf, reusableFreeJob } from "./free.mjs";
@@ -59,6 +59,8 @@ test("underpayment is refused even with the right memo", () => {
 // --- end to end ---------------------------------------------------------------
 let rpc, fac, osv, srv, base, testDir, currentMemo = null, x402Memo = null, osvDown = false, serdeVuln = false;
 const osvCalls = [];
+// Web-flow payments the fake RPC knows, by signature.
+const webTxs = new Map();
 // What the fake facilitator was asked to settle against, per call.
 const facCalls = [];
 const port = 18000 + Math.floor(Math.random() * 1000);
@@ -69,7 +71,8 @@ before(async () => {
     req.on("data", (c) => (b += c));
     req.on("end", () => {
       const { params } = JSON.parse(b);
-      const result = params[0] === SIG_OK ? fakeTx({ memo: currentMemo })
+      const result = webTxs.has(params[0]) ? webTxs.get(params[0])
+        : params[0] === SIG_OK ? fakeTx({ memo: currentMemo })
         : params[0] === SIG_NO_MEMO ? fakeTx()
         : params[0] === SIG_X402 ? fakeTx({ memo: x402Memo })
         : null;
@@ -138,6 +141,7 @@ before(async () => {
       OSV_BATCH_URL: `http://127.0.0.1:${osv.address().port}/v1/querybatch`,
       OSV_VULNS_URL: `http://127.0.0.1:${osv.address().port}/v1/vulns`,
       SCAN_PRICE_USD: "69",
+      SCAN_PRICE_SOL: "0.1",
       ALLOW_LOCAL: "1",
       FREE_SCANS_PER_HOUR: "2",
       PUBLIC_BASE_URL: base,
@@ -644,4 +648,52 @@ test("free tier end to end: program check without payment, repo preview, rate li
   // FREE_SCANS_PER_HOUR=2 in this server: the third new repo is refused.
   assert.equal((await call("/free/scan", { local: `${local}/` })).status, 202);
   assert.equal((await call("/free/scan", { local: `${local}//` })).status, 429);
+});
+
+// --- web unlock in SOL or USDC ------------------------------------------------------
+
+function fakeSolTx({ lamports, memo = null, merchant = MERCHANT }) {
+  const instructions = memo === null ? [] : [{ program: "spl-memo", programId: MEMO_PROGRAM_ID, parsed: memo, stackHeight: 1 }];
+  return {
+    transaction: { message: { accountKeys: [{ pubkey: "Payer1111111111111111111111111111111111111" }, { pubkey: merchant }], instructions } },
+    meta: { err: null, innerInstructions: [], preBalances: [5_000_000_000, 1_000], postBalances: [5_000_000_000 - lamports - 5000, 1_000 + lamports] },
+  };
+}
+
+test("SOL payment: the merchant's lamports must rise by the price, with the memo", () => {
+  const need = solToLamports(0.1);
+  assert.equal(need, 100_000_000n);
+  assert.equal(verifySolFromTx(fakeSolTx({ lamports: 100_000_000, memo: "j" }), { lamports: need, merchant: MERCHANT, memo: "j" }).ok, true);
+  assert.match(verifySolFromTx(fakeSolTx({ lamports: 99_999_999, memo: "j" }), { lamports: need, merchant: MERCHANT, memo: "j" }).reason, /less than required/);
+  assert.match(verifySolFromTx(fakeSolTx({ lamports: 100_000_000 }), { lamports: need, merchant: MERCHANT, memo: "j" }).reason, /memo/);
+  // Paid to someone else: the merchant is not in the transaction at all.
+  assert.equal(verifySolFromTx(fakeSolTx({ lamports: 100_000_000, memo: "j", merchant: "Other111111111111111111111111111111111111111" }), { lamports: need, merchant: MERCHANT, memo: "j" }).ok, false);
+});
+
+test("web unlock: SOL or USDC, bound to its job by the memo, never twice", async () => {
+  const h = { "content-type": "application/json", "fly-client-ip": "10.9.9.9" };
+  const order = async (currency) => (await fetch(`${base}/scan`, { method: "POST", headers: h, body: JSON.stringify({ repo: "https://github.com/OxToF/solana-security-watch", email: "a@b.co", currency }) })).json();
+  const verify = (jobId, signature) => fetch(`${base}/pay/verify`, { method: "POST", headers: h, body: JSON.stringify({ jobId, signature }) });
+
+  const sol = await order("SOL");
+  assert.equal(sol.currency, "SOL");
+  assert.equal(sol.amount, 0.1);
+  // USDC sent to a SOL order does not pay it, nor does SOL without this job's memo.
+  webTxs.set("A".repeat(88), fakeSolTx({ lamports: 100_000_000, memo: "someone-else" }));
+  assert.equal((await verify(sol.jobId, "A".repeat(88))).status, 402);
+  webTxs.set("B".repeat(88), fakeTx({ amount: 69_000_000n, memo: sol.jobId }));
+  assert.equal((await verify(sol.jobId, "B".repeat(88))).status, 402);
+  webTxs.set("C".repeat(88), fakeSolTx({ lamports: 100_000_000, memo: sol.jobId }));
+  assert.equal((await verify(sol.jobId, "C".repeat(88))).status, 202);
+  assert.equal((await verify(sol.jobId, "C".repeat(88))).status, 409);
+
+  const usdc = await order();
+  assert.equal(usdc.currency, "USDC");
+  assert.equal(usdc.amount, 69);
+  // The SOL proof already paid a job: refused here too.
+  assert.equal((await verify(usdc.jobId, "C".repeat(88))).status, 409);
+  webTxs.set("D".repeat(88), fakeTx({ amount: 69_000_000n }));
+  assert.equal((await verify(usdc.jobId, "D".repeat(88))).status, 402); // no memo
+  webTxs.set("E".repeat(88), fakeTx({ amount: 69_000_000n, memo: usdc.jobId }));
+  assert.equal((await verify(usdc.jobId, "E".repeat(88))).status, 202);
 });

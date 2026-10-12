@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
-import { PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js";
+import { PublicKey, SystemProgram, Transaction, TransactionInstruction } from "@solana/web3.js";
 import {
   getAssociatedTokenAddressSync,
   createTransferCheckedInstruction,
@@ -13,6 +13,7 @@ const WALLET = import.meta.env.VITE_MERCHANT_WALLET || "7yMnWMrxzZ3YCtWXRsZEhAFw
 // The server's price wins once a preview has loaded; this is only the first paint.
 // VITE_AMOUNT_USDC is not read: it may still hold the old 69 paywall price.
 const DEFAULT_PRICE = 9;
+const DEFAULT_PRICE_SOL = 0.1;
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const MEMO_PROGRAM = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
 
@@ -147,27 +148,37 @@ function RepoScan() {
   }
 
   const price = state?.unlockPriceUsd ?? DEFAULT_PRICE;
+  const priceSol = state?.unlockPriceSol ?? DEFAULT_PRICE_SOL;
 
-  async function unlock() {
+  async function unlock(currency) {
     setPayMsg(null);
     if (!isEmail(email)) return setPayMsg({ kind: "err", text: "Enter the email the report goes to." });
     if (!connected || !publicKey) return setPayMsg({ kind: "err", text: "Connect your wallet first." });
     setBusy(true);
     try {
       setPayMsg({ kind: "", text: "Creating your order…" });
-      const r = await fetch(`${API_BASE}/scan`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ repo: repo.trim(), email }) });
+      const r = await fetch(`${API_BASE}/scan`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ repo: repo.trim(), email, currency }) });
       if (!r.ok) throw new Error("Could not create the order. Try again.");
-      const { jobId, amountUsd } = await r.json();
-      const amount = amountUsd ?? price;
-      const mint = new PublicKey(USDC_MINT);
+      const order = await r.json();
+      const { jobId } = order;
+      const unit = order.currency || "USDC";
+      const amount = order.amount ?? (unit === "SOL" ? priceSol : price);
       const merchant = new PublicKey(WALLET);
-      const merchantAta = getAssociatedTokenAddressSync(mint, merchant);
-      const tx = new Transaction().add(
-        createAssociatedTokenAccountIdempotentInstruction(publicKey, merchantAta, merchant, mint),
-        createTransferCheckedInstruction(getAssociatedTokenAddressSync(mint, publicKey), mint, merchantAta, publicKey, BigInt(Math.round(amount * 1e6)), 6),
-        new TransactionInstruction({ keys: [], programId: new PublicKey(MEMO_PROGRAM), data: Buffer.from(jobId) })
-      );
-      setPayMsg({ kind: "", text: `Approve the ${amount} USDC payment in your wallet…` });
+      // The job id rides in a memo: the server only accepts a payment that names its job.
+      const memo = new TransactionInstruction({ keys: [], programId: new PublicKey(MEMO_PROGRAM), data: Buffer.from(jobId) });
+      const tx = new Transaction();
+      if (unit === "SOL") {
+        tx.add(SystemProgram.transfer({ fromPubkey: publicKey, toPubkey: merchant, lamports: Math.round(amount * 1e9) }), memo);
+      } else {
+        const mint = new PublicKey(USDC_MINT);
+        const merchantAta = getAssociatedTokenAddressSync(mint, merchant);
+        tx.add(
+          createAssociatedTokenAccountIdempotentInstruction(publicKey, merchantAta, merchant, mint),
+          createTransferCheckedInstruction(getAssociatedTokenAddressSync(mint, publicKey), mint, merchantAta, publicKey, BigInt(Math.round(amount * 1e6)), 6),
+          memo
+        );
+      }
+      setPayMsg({ kind: "", text: `Approve the ${amount} ${unit} payment in your wallet…` });
       const signature = await sendTransaction(tx, connection);
       setPayMsg({ kind: "", text: "Payment sent. Verifying on-chain…" });
       const v = await fetch(`${API_BASE}/pay/verify`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jobId, signature }) });
@@ -183,7 +194,7 @@ function RepoScan() {
   const p = state?.preview;
   return (
     <div className="tool">
-      <p className="tool-lead">Known advisories in its dependencies, build hygiene and known Solana bug classes. <b>The preview is free</b>; the full report with every file and line unlocks for {price} USDC.</p>
+      <p className="tool-lead">Known advisories in its dependencies, build hygiene and known Solana bug classes. <b>The preview is free</b>; the full report with every file and line unlocks for {priceSol} SOL.</p>
       <div className="row">
         <input className="fld" type="url" placeholder="https://github.com/org/repo" value={repo} onChange={(e) => setRepo(e.target.value)} spellCheck={false} autoCapitalize="off" />
         <button className="btn" onClick={() => scan()} disabled={busy}>{busy && !p ? "Scanning…" : "Free scan"}</button>
@@ -221,11 +232,12 @@ function RepoScan() {
 
           {(p.hidden.advisories > 0 || p.hidden.leads > 0) && (
             <div className="unlock">
-              <h4>Unlock the full report: {price} USDC</h4>
+              <h4>Unlock the full report: {priceSol} SOL</h4>
               <p className="hint">Every advisory and every lead with file and line, by email, as a page you can share with your team.</p>
               <div className="connect-row"><WalletMultiButton /></div>
               <input className="fld" type="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
-              <button className="btn pay" onClick={unlock} disabled={busy}>{busy ? "Working…" : `Pay ${price} USDC`}</button>
+              <button className="btn pay" onClick={() => unlock("SOL")} disabled={busy}>{busy ? "Working…" : `Pay ${priceSol} SOL`}</button>
+              <button className="btn ghost pay" onClick={() => unlock("USDC")} disabled={busy}>{`or pay ${price} USDC`}</button>
               {payMsg && <div className={`msg ${payMsg.kind}`}>{payMsg.text}</div>}
             </div>
           )}

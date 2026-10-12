@@ -1,5 +1,5 @@
-// On-chain verification of a USDC payment. Given a transaction signature, confirm
-// via RPC that it succeeded and moved at least `amountUsdc` of USDC into the
+// On-chain verification of a USDC (or SOL) payment. Given a transaction signature,
+// confirm via RPC that it succeeded and moved at least `amountUsdc` of USDC into the
 // merchant wallet. Uses jsonParsed token-balance deltas (robust: no instruction
 // decoding). Zero deps — plain fetch to a Solana RPC.
 
@@ -49,6 +49,27 @@ export function verifyFromTx(tx, { amountUsdc, merchant, mint = USDC_MINT, memo 
   return { ok: true, received: delta.toString() };
 }
 
+// Same check for a payment in SOL: the merchant's lamport balance must rise by at
+// least `lamports`. jsonParsed lists the account keys as { pubkey }, and pre/post
+// balances are indexed the same way.
+export const LAMPORTS_PER_SOL = 1_000_000_000n;
+export const solToLamports = (sol) => BigInt(Math.round(Number(sol) * 1e9));
+export function verifySolFromTx(tx, { lamports, merchant, memo = null }) {
+  if (!tx) return { ok: false, reason: "transaction not found or not yet confirmed" };
+  if (tx.meta && tx.meta.err) return { ok: false, reason: "transaction failed on-chain" };
+  if (memo !== null && !memosOf(tx).includes(memo)) {
+    return { ok: false, reason: `transaction does not carry the required memo "${memo}"` };
+  }
+  const keys = ((tx.transaction && tx.transaction.message && tx.transaction.message.accountKeys) || []).map((k) => (typeof k === "string" ? k : k.pubkey));
+  const i = keys.indexOf(merchant);
+  const pre = (tx.meta && tx.meta.preBalances) || [];
+  const post = (tx.meta && tx.meta.postBalances) || [];
+  const delta = i < 0 || pre[i] === undefined || post[i] === undefined ? 0n : BigInt(post[i]) - BigInt(pre[i]);
+  const need = BigInt(lamports);
+  if (delta < need) return { ok: false, reason: `SOL received (${delta} lamports) is less than required (${need})` };
+  return { ok: true, received: delta.toString() };
+}
+
 async function getTransaction(signature, rpcUrl, fetchImpl) {
   const res = await fetchImpl(rpcUrl, {
     method: "POST",
@@ -66,10 +87,15 @@ async function getTransaction(signature, rpcUrl, fetchImpl) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export async function verifyUsdcPayment({
-  signature, amountUsdc, merchant, rpcUrl, mint = USDC_MINT, memo = null,
-  fetchImpl = globalThis.fetch, retries = 10, delayMs = 3000,
-}) {
+export async function verifyUsdcPayment({ amountUsdc, merchant, mint = USDC_MINT, memo = null, ...lookup }) {
+  return verifyWith(lookup, (tx) => verifyFromTx(tx, { amountUsdc, merchant, mint, memo }));
+}
+
+export async function verifySolPayment({ lamports, merchant, memo = null, ...lookup }) {
+  return verifyWith(lookup, (tx) => verifySolFromTx(tx, { lamports, merchant, memo }));
+}
+
+async function verifyWith({ signature, rpcUrl, fetchImpl = globalThis.fetch, retries = 10, delayMs = 3000 }, check) {
   if (!/^[1-9A-HJ-NP-Za-km-z]{64,120}$/.test(signature || "")) {
     return { ok: false, reason: "invalid signature format" };
   }
@@ -86,5 +112,5 @@ export async function verifyUsdcPayment({
     if (i < retries - 1) await sleep(delayMs);
   }
   if (!tx && lastErr) return { ok: false, reason: `RPC lookup failed: ${lastErr.message}` };
-  return verifyFromTx(tx, { amountUsdc, merchant, mint, memo });
+  return check(tx);
 }
