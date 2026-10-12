@@ -162,7 +162,7 @@ async function runJob(jobId) {
     const top = bk.onchain.slice(0, 3).map((a) => `- [${a.severity}] ${a.id} — ${a.summary}`).join("\n");
     if (job.email) await sendReport({
       to: job.email,
-      subject: `Your Solana security scan — ${result.meta.owner}/${result.meta.repo}`,
+      subject: `Watchdog checked ${result.meta.owner}/${result.meta.repo}: your report is ready`,
       text: `Scan complete for ${job.repo}.\n\n${onchainN} advisories on the on-chain surface (crates your deployed program links against), ${offchainN} more on toolchain and unmaintained crates, ${leadN} code leads.\n\nOn-chain advisories:\n${top || "(none — clean on the deployed surface)"}\n\nView your report: ${viewUrl}\nWant the findings fixed? Write to ${CONTACT} with reference ${jobId}.\n\nThe report is also attached.`,
       html: `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:560px;margin:auto;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #eaecf3">
 <div style="background:#160b2e;padding:18px 22px;border-bottom:3px solid #14F195">
