@@ -680,7 +680,9 @@ test("SOL payment: the merchant's lamports must rise by the price, with the memo
 
 test("web unlock: SOL or USDC, bound to its job by the memo, never twice", async () => {
   const h = { "content-type": "application/json", "fly-client-ip": "10.9.9.9" };
-  const order = async (currency) => (await fetch(`${base}/scan`, { method: "POST", headers: h, body: JSON.stringify({ repo: "https://github.com/OxToF/solana-security-watch", email: "a@b.co", currency }) })).json();
+  const order = async (currency) => (await fetch(`${base}/scan`, { method: "POST", headers: h, body: JSON.stringify({ local: "/nonexistent", email: "a@b.co", currency }) })).json();
+  // A local path that does not exist: the paid job fails at once instead of scanning
+  // GitHub in the background, whose OSV calls would land in another test's count.
   const verify = (jobId, signature) => fetch(`${base}/pay/verify`, { method: "POST", headers: h, body: JSON.stringify({ jobId, signature }) });
 
   const sol = await order("SOL");
