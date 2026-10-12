@@ -21,7 +21,7 @@ import { runScan, parseGithubUrl, fixMailto, WATCHDOG_LOGO, scanDependencies, sc
 import { Store } from "./store.mjs";
 import { Queue } from "./queue.mjs";
 import { sendReport } from "./email.mjs";
-import { verifyUsdcPayment, USDC_MINT } from "./verify.mjs";
+import { verifyUsdcPayment, verifySolPayment, solToLamports, USDC_MINT } from "./verify.mjs";
 import { Facilitator, SOLANA_MAINNET, encodeHeader, decodeHeader, bazaarExtension } from "./x402.mjs";
 import { PayAIAuth } from "./payai-auth.mjs";
 import { Traffic } from "./traffic.mjs";
@@ -32,6 +32,8 @@ import { Watcher, checkWebhookUrl, newSecret, programSnapshot, diffProgram, lock
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
 const PRICE_USD = Number(process.env.SCAN_PRICE_USD || 9); // web: a human unlocks the full branded report by email
+// The same unlock in SOL, at a fixed price: every Seeker holds SOL, not always USDC.
+const PRICE_SOL = Number(process.env.SCAN_PRICE_SOL || 0.1);
 // Free tier, per visitor: a few repo previews an hour, program checks more freely.
 // A free scan shares the queue with paid ones, so past a few waiting it is refused.
 const FREE_SCANS_PER_HOUR = Number(process.env.FREE_SCANS_PER_HOUR || 3);
@@ -1084,7 +1086,7 @@ const server = createServer(async (req, res) => {
       const m = /^\/free\/scan\/([0-9a-f-]{36})$/.exec(url.pathname);
       const job = m && store.get(m[1]);
       if (!job || !job.free) return send(res, 404, { error: "unknown scan" });
-      return send(res, 200, { jobId: job.id, repo: job.repo, status: job.status, ...(job.preview ? { preview: job.preview } : {}), ...(job.status === "error" ? { error: "The scan failed: is the repo public and a Rust / Anchor project?" } : {}), unlockPriceUsd: PRICE_USD });
+      return send(res, 200, { jobId: job.id, repo: job.repo, status: job.status, ...(job.preview ? { preview: job.preview } : {}), ...(job.status === "error" ? { error: "The scan failed: is the repo public and a Rust / Anchor project?" } : {}), unlockPriceUsd: PRICE_USD, unlockPriceSol: PRICE_SOL });
     }
 
     if (req.method === "POST" && url.pathname === "/scan") {
@@ -1098,15 +1100,19 @@ const server = createServer(async (req, res) => {
       }
       if (!body.email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(body.email))
         return send(res, 400, { error: "valid email required" });
+      const currency = body.currency === "SOL" ? "SOL" : "USDC";
       const job = store.create({
         repo: isLocal ? `local:${body.local}` : repoInfo.url,
         local: isLocal ? body.local : undefined,
         email: body.email,
-        priceUsd: PRICE_USD,
+        currency,
+        ...(currency === "SOL" ? { priceSol: PRICE_SOL } : { priceUsd: PRICE_USD }),
       });
       return send(res, 201, {
         jobId: job.id,
         status: job.status,
+        currency,
+        amount: currency === "SOL" ? PRICE_SOL : PRICE_USD,
         amountUsd: PRICE_USD,
         payment: { reference: job.id, instructions: PAY_INSTRUCTIONS },
       });
@@ -1138,13 +1144,15 @@ const server = createServer(async (req, res) => {
       const dup = store.findBySignature(body.signature);
       if (dup) return send(res, 409, { error: "payment signature already used" });
 
-      const result = await verifyUsdcPayment({
-        signature: body.signature,
-        amountUsdc: job.priceUsd || PRICE_USD,
-        merchant: MERCHANT_WALLET,
-        rpcUrl: SOLANA_RPC_URL,
-      });
+      // The page writes the job id in a memo: requiring it means a transfer seen
+      // on-chain cannot be claimed for someone else's job before its payer does.
+      const result = job.currency === "SOL"
+        ? await verifySolPayment({ signature: body.signature, lamports: solToLamports(job.priceSol), merchant: MERCHANT_WALLET, rpcUrl: SOLANA_RPC_URL, memo: job.id })
+        : await verifyUsdcPayment({ signature: body.signature, amountUsdc: job.priceUsd || PRICE_USD, merchant: MERCHANT_WALLET, rpcUrl: SOLANA_RPC_URL, memo: job.id });
       if (!result.ok) return send(res, 402, { error: `payment not verified: ${result.reason}` });
+      // Re-check after the await: two concurrent proofs must not both win.
+      if (store.findBySignature(body.signature) || !["pending_payment"].includes(store.get(job.id).status))
+        return send(res, 409, { error: "payment already credited" });
 
       store.update(job.id, { status: "paid", paidAt: new Date().toISOString(), paymentSignature: body.signature });
       queue.enqueue(() => runJob(job.id));
@@ -1184,7 +1192,7 @@ server.listen(PORT, () => {
   console.log(`[server] facilitator lane: ${payaiAuth ? `PayAI ${payaiAuth.label()}` : payaiAuthError ? "public, PAYAI KEY IGNORED" : "public (no key)"}`);
   if (payaiAuthError) console.error(`[server] ERROR PayAI key ignored: ${payaiAuthError}`);
   console.log(`[server] solana-security-watch scan backend on :${PORT}`);
-  console.log(`[server] admin ${ADMIN_TOKEN ? "enabled" : "DISABLED (set ADMIN_TOKEN)"} · email ${process.env.RESEND_API_KEY ? "Resend" : "DEV mode (disk)"} · price ${PRICE_USD} USDC web · agents ${AGENT_SCAN_PRICE_USD} scan / ${CHECK_PRICE_USD} check`);
+  console.log(`[server] admin ${ADMIN_TOKEN ? "enabled" : "DISABLED (set ADMIN_TOKEN)"} · email ${process.env.RESEND_API_KEY ? "Resend" : "DEV mode (disk)"} · price ${PRICE_USD} USDC or ${PRICE_SOL} SOL web · agents ${AGENT_SCAN_PRICE_USD} scan / ${CHECK_PRICE_USD} check`);
   console.log(`[server] payments ${MERCHANT_WALLET ? "on -> " + MERCHANT_WALLET : "OFF (set MERCHANT_WALLET to enable /pay/verify)"} · rpc ${rpcHost(SOLANA_RPC_URL)}`);
 });
 
