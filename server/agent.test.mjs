@@ -142,6 +142,7 @@ before(async () => {
       OSV_VULNS_URL: `http://127.0.0.1:${osv.address().port}/v1/vulns`,
       SCAN_PRICE_USD: "69",
       SCAN_PRICE_SOL: "0.1",
+      ALLOW_ORIGIN: "https://site.example, https://alias.example/",
       ALLOW_LOCAL: "1",
       FREE_SCANS_PER_HOUR: "2",
       PUBLIC_BASE_URL: base,
@@ -696,4 +697,14 @@ test("web unlock: SOL or USDC, bound to its job by the memo, never twice", async
   assert.equal((await verify(usdc.jobId, "D".repeat(88))).status, 402); // no memo
   webTxs.set("E".repeat(88), fakeTx({ amount: 69_000_000n, memo: usdc.jobId }));
   assert.equal((await verify(usdc.jobId, "E".repeat(88))).status, 202);
+});
+
+test("CORS: every listed origin is answered with itself, any other gets the first", async () => {
+  const pre = (origin) => fetch(`${base}/free/scan`, { method: "OPTIONS", headers: { origin, "access-control-request-method": "POST" } });
+  for (const [origin, want] of [["https://site.example", "https://site.example"], ["https://alias.example", "https://alias.example"], ["https://evil.example", "https://site.example"]]) {
+    const r = await pre(origin);
+    assert.equal(r.status, 204);
+    assert.equal(r.headers.get("access-control-allow-origin"), want);
+    assert.match(r.headers.get("vary"), /Origin/);
+  }
 });

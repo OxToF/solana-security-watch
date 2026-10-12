@@ -56,7 +56,13 @@ const WATCH_ALLOW_PRIVATE = process.env.WATCH_ALLOW_PRIVATE_WEBHOOKS === "1"; //
 const LOCKFILE_MAX_BYTES = 2_000_000;
 const LOCKFILE_MAX_PACKAGES = 5000;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || null;
-const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN || "*";
+// One origin, "*", or a comma-separated list: the site answers on its own domain
+// and on its vercel.app alias, and a single fixed origin silently broke the first.
+const ALLOW_ORIGINS = (process.env.ALLOW_ORIGIN || "*").split(",").map((o) => o.trim().replace(/\/$/, "")).filter(Boolean);
+function corsOrigin(origin, allowed = ALLOW_ORIGINS) {
+  if (allowed.includes("*")) return "*";
+  return allowed.includes(origin) ? origin : allowed[0];
+}
 const ALLOW_LOCAL = process.env.ALLOW_LOCAL === "1"; // dev/testing only
 const MERCHANT_WALLET = process.env.MERCHANT_WALLET || null; // USDC recipient (Solana)
 const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
@@ -102,7 +108,8 @@ function send(res, code, body, extraHeaders = {}) {
   const payload = typeof body === "string" ? body : JSON.stringify(body);
   res.writeHead(code, {
     "content-type": typeof body === "string" ? "text/plain" : "application/json",
-    "access-control-allow-origin": ALLOW_ORIGIN,
+    "access-control-allow-origin": res.corsOrigin || corsOrigin(null),
+    vary: "Origin",
     "access-control-allow-methods": "POST, GET, DELETE, OPTIONS",
     "access-control-allow-headers": "content-type, authorization, payment-signature",
     "access-control-expose-headers": "payment-required, payment-response",
@@ -887,6 +894,7 @@ const server = createServer(async (req, res) => {
   // keyed on it, the rate limits were one budget shared by everyone.
   const ip = req.headers["fly-client-ip"] || req.socket.remoteAddress || "?";
   const url = new URL(req.url, `http://localhost:${PORT}`);
+  res.corsOrigin = corsOrigin(req.headers.origin);
   traffic.watch(req, res, ip);
   if (req.method === "OPTIONS") return send(res, 204, "");
 

@@ -79,7 +79,7 @@ Then point the landing page at it: set `window.SSW_ENDPOINT = "https://your-back
 | `CHECK_PRICE_USD` | price of one `/agent/check` request (default 0.01) |
 | `OSV_QUERY_URL` | advisory database endpoint (default OSV; tests point it at a fake) |
 | `RESEND_API_KEY` + `MAIL_FROM` | email delivery via Resend; omit for dev disk mode |
-| `ALLOW_ORIGIN` | CORS origin for the landing page (default `*`) |
+| `ALLOW_ORIGIN` | CORS origin(s) of the landing page, comma-separated (default `*`) |
 | `JOBS_FILE` | job store path (default `server/data/jobs.json`) |
 | `PUBLIC_BASE_URL` | absolute base used in agent-facing URLs and `/skill.md` |
 | `REPORTS_DIR` | where agent reports are kept (default `reports/` next to `JOBS_FILE`) |
