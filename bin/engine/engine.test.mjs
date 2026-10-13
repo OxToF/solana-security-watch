@@ -193,3 +193,29 @@ test("a thread-safety advisory is not exploitable in a single-threaded program",
   const j = judgeAdvisories([{ id: "RUSTSEC-2020-0137", aliases: [], severity: "HIGH", summary: "Data races in lever", crates: ["lever 0.1.0"], url: "u" }], { crates: new Set(["lever 0.1.0"]) });
   assert.equal(j.onchain[0].verdict, "not-exploitable");
 });
+
+test("production patterns: keeper-signed authority is a note, delegated remaining_accounts and mocks are left alone", () => {
+  // Drift-style: the user's authority is identified (has_one), a keeper signs.
+  const r = fixture(`
+#[account] pub struct User { pub authority: Pubkey }
+#[derive(Accounts)]
+pub struct ForceDelete<'info> {
+    #[account(mut, has_one = authority)] pub user: Account<'info, User>,
+    /// CHECK: receives the rent
+    #[account(mut)] pub authority: AccountInfo<'info>,
+    pub keeper: Signer<'info>,
+}
+pub fn force_delete(ctx: Context<ForceDelete>) -> Result<()> { Ok(()) }`);
+  assert.deepEqual(rules(r), []);
+  assert.deepEqual(r.findings.map((f) => `${f.confidence}:${f.rule}`), ["low:missing-signer"]);
+  // remaining_accounts handed to a loader that validates them.
+  assert.equal(fixture(`
+#[derive(Accounts)]
+pub struct Swap<'info> { pub user: Signer<'info> }
+pub fn swap(ctx: Context<Swap>) -> Result<()> { let maps = load_maps(ctx.remaining_accounts)?; Ok(()) }`).findings.length, 0);
+  // A plain transfer next to transfer_checked: the classic-SPL branch, deliberate.
+  assert.equal(fixture(`
+pub fn send(a: u64) -> Result<()> {
+    if is_2022 { token_interface::transfer_checked(cpi, a, d) } else { token_interface::transfer(cpi, a) }
+}`).findings.length, 0);
+});

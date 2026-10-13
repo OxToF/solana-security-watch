@@ -211,7 +211,7 @@ function findHandlers(files) {
       if (open < 0) continue;
       const close = matchClose(f.masked, open);
       if (close < 0) continue;
-      const h = { fn: m[1], file: f.rel, line: lineAt(f.masked, m.index), body: f.masked.slice(open, close + 1), start: open };
+      const h = { fn: m[1], file: f.rel, line: lineAt(f.masked, m.index), body: f.masked.slice(open, close + 1), start: open, sig: f.masked.slice(m.index, open) };
       if (!byStruct.has(m[3])) byStruct.set(m[3], []);
       byStruct.get(m[3]).push(h);
     }
@@ -273,6 +273,10 @@ function distinctnessProved(a, b, s, text) {
   if (a.c.init || b.c.init) return true; // created by this instruction: cannot already be the other
   const pair = new RegExp(`\\b${a.name}\\b[^;\\n]*(!=|\\bne\\b)[^;\\n]*\\b${b.name}\\b|\\b${b.name}\\b[^;\\n]*(!=|\\bne\\b)[^;\\n]*\\b${a.name}\\b|keys_neq!\\s*\\([^;]*\\b${a.name}\\b[^;]*\\b${b.name}\\b|keys_neq!\\s*\\([^;]*\\b${b.name}\\b[^;]*\\b${a.name}\\b`);
   if ([...a.c.constraints, ...b.c.constraints, text].some((t) => pair.test(t))) return true;
+  // `if a.key() == b.key() { return Err(..) }`: equality as the condition of a refusal.
+  const refusal = new RegExp(`if\\s+[^{;]*\\b(${a.name}|${b.name})\\b[^{;]*==[^{;]*\\b(${a.name}|${b.name})\\b[^{;]*\\{\\s*(return\\s+)?(Err|err!)`);
+  const m = refusal.exec(text);
+  if (m && m[1] !== m[2]) return true;
   const sa = seedParts(a), sb = seedParts(b);
   if (sa && sb && !selfSeeded(a) && !selfSeeded(b)) {
     if (sa.length !== sb.length) return true;
@@ -303,9 +307,13 @@ function validated(f, s) {
   return false;
 }
 
+// Test doubles shipped as programs (programs/mocks, test-programs) are never deployed.
+const NOT_DEPLOYED = /(^|\/)(mocks?|test[-_]?programs?|tests?|fuzz|benches)(\/|$)/;
+
 export function analyzeAnchor(programDirs, repoDir) {
   const files = [];
-  for (const d of programDirs) for (const p of rustFiles(join(d, "src"))) {
+  const skipped = programDirs.filter((d) => NOT_DEPLOYED.test(relative(repoDir, d)));
+  for (const d of programDirs.filter((x) => !skipped.includes(x))) for (const p of rustFiles(join(d, "src"))) {
     const raw = readFileSync(p, "utf8");
     files.push({ path: p, rel: relative(repoDir, p), raw, masked: stripTestModules(maskRust(raw)) });
   }
@@ -319,6 +327,15 @@ export function analyzeAnchor(programDirs, repoDir) {
     return { from, focus: line, lines: ls.slice(from - 1, to) };
   };
 
+  // Plain Borsh structs of the program (not #[account]): name -> field names. Their bytes
+  // carry no type tag unless a field says so.
+  const structFields = new Map();
+  for (const f of files) for (const m of f.masked.matchAll(/#\[derive\(([^)]*)\)\]\s*(?:#\[[^\]]*\]\s*)*pub\s+struct\s+(\w+)\s*\{([^}]*)\}/g)) {
+    if (!/(Borsh|Anchor)Deserialize/.test(m[1])) continue;
+    const before = f.masked.slice(Math.max(0, m.index - 200), m.index);
+    if (/#\[account(\([^)]*\))?\]\s*$/.test(before)) continue;
+    structFields.set(m[2], [...m[3].matchAll(/(?:pub(?:\([^)]*\))?\s+)?(\w+)\s*:/g)].map((x) => x[1]));
+  }
   let initIfNeeded = 0; // state accounts the takeover rule examined
   const localTypes = new Set();
   for (const f of files) for (const m of f.masked.matchAll(/#\[account(?:\([^)]*\))?\]\s*(?:#\[[^\]]*\]\s*)*pub\s+struct\s+(\w+)/g)) localTypes.add(m[1]);
@@ -330,7 +347,7 @@ export function analyzeAnchor(programDirs, repoDir) {
     const open = m.index + m[0].length - 1;
     const close = matchClose(f.masked, open);
     if (close > 0) fnBodies.set(m[1], (fnBodies.get(m[1]) || "") + f.masked.slice(open, close + 1));
-    if (close > 0) fnSigs.push({ sig: m[0], body: f.masked.slice(open, close + 1) });
+    if (close > 0) fnSigs.push({ sig: m[0], body: f.masked.slice(open, close + 1), file: f.rel, from: lineAt(f.masked, open), to: lineAt(f.masked, close) });
   }
   const reachableText = (bodies) => {
     const seen = new Set();
@@ -358,13 +375,46 @@ export function analyzeAnchor(programDirs, repoDir) {
     const perHandler = (hs.length ? hs : [null]).map((h) => ({ h, text: aliasFields(reachableText([...(h ? [h.body] : []), ...helpers]) + "\n" + s.text, fieldNames) }));
     const runText = perHandler.map((x) => x.text).join("\n");
 
+    for (const h of hs) {
+      // A PDA verified with a bump the caller chose: several bumps give valid addresses for
+      // the same seeds, so the "same" PDA has up to 255 versions.
+      for (const m of h.body.matchAll(/create_program_address\s*\(/g)) {
+        const close = matchClose(h.body, m.index + m[0].length - 1, "(", ")");
+        const bump = close > 0 && /&\s*\[\s*(\w+)\s*\]/.exec(h.body.slice(m.index, close));
+        if (!bump || !new RegExp(`\\b${bump[1]}\\s*:\\s*u8\\b`).test(h.sig) || /find_program_address/.test(h.body)) continue;
+        const line = h.line + h.sig.split("\n").length - 1 + h.body.slice(0, m.index).split("\n").length - 1;
+        const file = files.find((x) => x.rel === h.file);
+        add({ rule: "bump-canonicalization", severity: "high", confidence: "medium", struct: s.name, field: bump[1], file: h.file, line, handlers: [h.fn],
+          title: `\`${h.fn}\` accepts any bump for its PDA`,
+          why: `The address is rebuilt with \`create_program_address\` and a \`${bump[1]}\` taken from the instruction arguments. Several bumps give a valid address for the same seeds, so a caller can make the program accept a different account than the canonical PDA, with its own contents.`,
+          fix: `Derive with \`find_program_address\` and require that bump, or use \`#[account(seeds = [..], bump = stored.bump)]\` with the canonical bump stored at creation.`,
+          snippet: snippetOf(file.raw, line) });
+      }
+      // Signer seeds made of a mint alone: every account built on the same mint shares the
+      // signer, so one user's pool can sign transfers out of another's vault.
+      for (const m of reachableText([h.body, ...helpers]).matchAll(/let\s+(\w+)\s*=\s*&\s*\[\s*([^\]]*?)\s*,\s*&\s*\[\s*[\w.]*bump\s*\]\s*,?\s*\]\s*;/g)) {
+        const parts = splitTop(m[2]);
+        if (parts.length !== 1 || !/\.mint\b/.test(parts[0]) || /"/.test(parts[0])) continue;
+        if (!new RegExp(`with_signer\\s*\\(\\s*&\\s*\\[\\s*${m[1]}\\b|invoke_signed\\s*\\([^;]*\\b${m[1]}\\b|new_with_signer\\s*\\([^;]*\\b${m[1]}\\b`).test(h.body)) continue;
+        const file = files.find((x) => x.rel === h.file);
+        const line = h.line + h.sig.split("\n").length - 1 + h.body.slice(0, h.body.indexOf(m[0])).split("\n").length - 1;
+        add({ rule: "pda-sharing", severity: "high", confidence: "medium", struct: s.name, field: null, file: h.file, line, handlers: [h.fn],
+          title: `\`${h.fn}\` signs with a PDA shared by every account of the same mint`,
+          why: `The signer seeds are only \`${parts[0].trim()}\` and a bump. Any other account of this program built on the same mint derives the same signer, so whoever controls one can sign for all of them, for example moving tokens out of a vault that is not theirs.`,
+          fix: `Put what makes the authority unique in its seeds (the destination, the user, the pool's own key), and check them with \`#[account(seeds = [..], bump)]\`.`,
+          snippet: snippetOf(file.raw, line) });
+      }
+    }
+
     for (const f of s.fields) {
       const loose = f.kind === "UncheckedAccount" || f.kind === "AccountInfo";
       // Arbitrary CPI target: a program taken as a raw account and never pinned.
       // ...and only when the call goes to it: `program_id: X.key()` or `CpiContext::new(X..)`.
       // A CPI to a hard-coded id (program_id: SOME_ID) merely lists the account.
-      const targetsIt = new RegExp(`program_id\\s*:\\s*[\\w.]*\\b${f.name}\\b|CpiContext::new(?:_with_signer)?\\s*\\(\\s*[\\w.]*\\b${f.name}\\b|Instruction::new_with_\\w+\\s*\\(\\s*[\\w.]*\\b${f.name}\\b`).test(runText);
-      if (loose && PROGRAM_NAME.test(f.name) && targetsIt && !validated(f, s) && !new RegExp(`${f.name}\\.key\\(\\)\\s*(==|!=)|${f.name}\\.key\\s*(==|!=)|check_id\\(\\s*[^)]*${f.name}`).test(runText)) {
+      // An instruction builder takes the program id first: spl_token::instruction::transfer(X.key, ..).
+      const targetsIt = new RegExp(`program_id\\s*:\\s*[\\w.]*\\b${f.name}\\b|CpiContext::new(?:_with_signer)?\\s*\\(\\s*[\\w.]*\\b${f.name}\\b|Instruction::new_with_\\w+\\s*\\(\\s*[\\w.]*\\b${f.name}\\b|instruction::\\w+\\s*\\(\\s*&?[\\w.]*\\b${f.name}\\b`).test(runText);
+      const pinnedInCode = new RegExp(`${f.name}\\.key(\\(\\))?\\s*(==|!=)|(==|!=)\\s*&?\\s*[\\w.]*\\b${f.name}\\s*\\.\\s*key\\b|check_id\\(\\s*[^)]*${f.name}|require_keys_eq!\\s*\\([^;]*\\b${f.name}\\b`).test(runText);
+      if (loose && PROGRAM_NAME.test(f.name) && targetsIt && !validated(f, s) && !pinnedInCode) {
         add({ rule: "arbitrary-cpi", severity: "high", confidence: "medium", struct: s.name, field: f.name, file: s.file, line: f.line,
           title: `\`${f.name}\` is a program account nobody checks`,
           why: `\`${s.name}.${f.name}\` is a raw ${f.kind}, with no \`address\` constraint and no key comparison in the handler. If the instruction makes a CPI to it, the caller chooses which program runs: a look-alike program can accept the call and do nothing, or return fake data, while this program believes the transfer or the check happened.`,
@@ -379,8 +429,11 @@ export function analyzeAnchor(programDirs, repoDir) {
         // Compared to a stored key in the handler is gating too. Neither: the key is only
         // recorded (a creator naming an admin), which authorizes nothing here.
         const comparedInCode = new RegExp(`\\b${f.name}\\s*\\.\\s*key\\(\\)\\s*==|==\\s*[^;\\n]*\\b${f.name}\\s*\\.\\s*key\\(\\)|keys_eq!\\s*\\([^;]*\\b${f.name}\\b`).test(runText);
+        // Another account signs (a keeper, a payer): the unsigned "authority" is then most often
+        // the owner being acted upon in a permissionless instruction. Worth a look, not a verdict.
+        const otherSigner = s.fields.find((o) => o !== f && (o.kind === "Signer" || o.c.signer));
         if (gated.length || comparedInCode) {
-        add({ rule: "missing-signer", severity: "critical", confidence: gated.length ? "high" : "medium", struct: s.name, field: f.name, file: s.file, line: f.line,
+        add({ rule: "missing-signer", severity: "critical", confidence: otherSigner ? "low" : gated.length ? "high" : "medium", struct: s.name, field: f.name, file: s.file, line: f.line,
           title: `\`${f.name}\` is checked by key but never has to sign`,
           why: gated.length
             ? `\`${gated.join("`, `")}\` require${gated.length > 1 ? "" : "s"} \`${f.name}\` to match a stored key (has_one / constraint), but \`${f.name}\` is a ${f.kind}: anyone can pass the right public key without holding the private key. The authority check is decorative.`
@@ -389,9 +442,25 @@ export function analyzeAnchor(programDirs, repoDir) {
           snippet: snippetOf(s.raw, f.line) });
           continue;
         }
+        // Not compared to anything either. Two shapes are not an authority check at all:
+        // a key recorded into an account this instruction creates (a creator naming an
+        // admin), and an account handed to a CPI whose callee checks the signature.
+        const recorded = new RegExp(`\\.\\s*\\w+\\s*=\\s*[^;=]*\\b${f.name}\\s*\\.\\s*key\\b`).test(runText) && s.fields.some((o) => o.c.init || o.c.initIfNeeded || o.c.zero);
+        const forwarded = new RegExp(`instruction::\\w+\\s*\\([^;]*\\b${f.name}\\b`).test(runText)
+          || (/\binvoke(_signed)?\s*\(|CpiContext::new/.test(runText) && new RegExp(`\\b${f.name}\\s*\\.\\s*(clone|to_account_info)\\(\\)`).test(runText));
+        if (!recorded && !forwarded) {
+          add({ rule: "missing-signer", severity: "high", confidence: otherSigner ? "low" : "medium", struct: s.name, field: f.name, file: s.file, line: f.line,
+            title: `\`${f.name}\` acts as the authority but never has to sign`,
+            why: `\`${f.name}\` is a ${f.kind} with no \`signer\` constraint and no \`is_signer\` check. Whatever this instruction does on behalf of \`${f.name}\`, anyone can do it by passing that public key.`,
+            fix: `Type it \`Signer<'info>\`, or add the \`signer\` constraint.`,
+            snippet: snippetOf(s.raw, f.line) });
+          continue;
+        }
       }
       // Sysvar taken as a raw account: a forged "clock" or "instructions" account.
-      if (loose && SYSVAR_NAME.test(f.name) && !f.c.address && !new RegExp(`${f.name}[^;]*(sysvar::|::ID|::id\\(\\))`).test(hText)) {
+      // Handed to a CPI (the stake program reading stake_history), the callee checks it.
+      const sysvarForwarded = /\binvoke(_signed)?\s*\(|CpiContext::new/.test(runText) && new RegExp(`\\b${f.name}\\s*\\.\\s*(clone|to_account_info)\\(\\)`).test(runText);
+      if (loose && SYSVAR_NAME.test(f.name) && !f.c.address && !sysvarForwarded && !new RegExp(`${f.name}[^;]*(sysvar::|::ID|::id\\(\\))`).test(hText)) {
         add({ rule: "unchecked-sysvar", severity: "high", confidence: "medium", struct: s.name, field: f.name, file: s.file, line: f.line,
           title: `Sysvar \`${f.name}\` is read from an unverified account`,
           why: `\`${f.name}\` is a raw ${f.kind} without an address check. A caller can pass an account they control with forged contents (the Wormhole exploit used a fake instructions sysvar).`,
@@ -402,8 +471,50 @@ export function analyzeAnchor(programDirs, repoDir) {
       // Data read from an account whose owner nobody checked.
       if (loose && !validated(f, s)) {
         const reads = new RegExp(`${f.name}\\s*\\.\\s*(try_borrow_data|data\\s*\\.\\s*borrow|try_borrow_mut_data)|${f.name}[^;\\n]*(try_from_slice|try_deserialize|from_le_bytes)`).test(hText);
-        const ownerChecked = new RegExp(`${f.name}\\s*\\.\\s*owner|${f.name}[^;\\n]*\\.owner\\(\\)|(Account|AccountLoader|InterfaceAccount)(::<[^>]*>)?::try_from\\([^)]*${f.name}`).test(hText);
-        if (reads && !ownerChecked) {
+        // An owner check compares the owner to a program id. `x.owner` alone proves nothing:
+        // the decoded data often has an `owner` field too (an SPL token account's).
+        const ownerChecked = new RegExp(`${f.name}\\s*\\.\\s*owner\\s*(==|!=)\\s*[^;\\n]*(ID\\b|id\\(\\)|program_id)|(ID\\b|id\\(\\)|program_id)[^;\\n]*(==|!=)\\s*&?\\s*[\\w.]*\\b${f.name}\\s*\\.\\s*owner\\b|${f.name}[^;\\n]*\\.owner\\(\\)\\s*(==|!=)|(Account|AccountLoader|InterfaceAccount)(::<[^>]*>)?::try_from\\([^)]*${f.name}|check_program_account\\s*\\([^)]*${f.name}`).test(hText)
+          // Debiting an account's lamports only succeeds for its owner: the runtime checks it.
+          || new RegExp(`${f.name}[^;\\n]*lamports[^;\\n]*borrow_mut\\(\\)\\s*=|${f.name}[^;\\n]*try_borrow_mut_lamports`).test(hText);
+        // What the handler decodes from it: `let v = T::try_from_slice(&..f.data.borrow())`.
+        const decoded = [...hText.matchAll(new RegExp(`let\\s+(?:mut\\s+)?(\\w+)\\s*(?::[^=]*)?=\\s*([A-Z]\\w*)\\s*::\\s*(try_from_slice|unpack|unpack_unchecked|deserialize|try_deserialize)\\s*\\([^;]*\\b${f.name}\\b`, "g"))].map((m) => ({ v: m[1], type: m[2], how: m[3] }));
+        const writesBack = new RegExp(`${f.name}\\s*\\.\\s*try_borrow_mut_data|serialize\\s*\\([^;]*\\b${f.name}\\b`).test(hText) || /\.serialize\s*\(/.test(hText) && new RegExp(`${f.name}[^;]*try_borrow_mut_data`).test(hText);
+        for (const d of decoded) {
+          const local = structFields.get(d.type);
+          const disc = local && local.find((x) => /discrimina|account_type|\bkind\b|\btag\b|is_initiali[sz]ed|initiali[sz]ed/.test(x));
+          const checksDisc = disc && new RegExp(`\\b${d.v}\\s*\\.\\s*${disc}\\b\\s*(==|!=)|!\\s*${d.v}\\s*\\.\\s*${disc}\\b|(==|!=)\\s*${d.v}\\s*\\.\\s*${disc}\\b|require[^;]*\\b${d.v}\\s*\\.\\s*${disc}\\b`).test(hText);
+          const authWrite = new RegExp(`\\b${d.v}\\s*\\.\\s*(\\w*(?:authority|owner|admin)\\w*)\\s*=(?!=)`).exec(hText);
+          // Initialization of a raw account with no "already initialized" flag checked.
+          if (writesBack && authWrite && !checksDisc) {
+            add({ rule: "reinit-takeover", severity: "critical", confidence: "medium", struct: s.name, field: f.name, file: s.file, line: f.line,
+              handlers: hs.map((h) => h.fn),
+              title: `Anyone can re-initialize \`${f.name}\` and become its \`${authWrite[1]}\``,
+              why: `The handler decodes \`${f.name}\` as \`${d.type}\`, writes \`${authWrite[1]}\` and stores it back, without checking that the account was not initialized already. Calling it again on a live account replaces its ${authWrite[1]}.`,
+              fix: `Use \`#[account(init, ..)]\` with a typed \`Account<'info, ${d.type}>\`, or store an \`is_initialized\` flag and refuse when it is set.`,
+              snippet: snippetOf(s.raw, f.line) });
+            continue;
+          }
+          // Type cosplay: a plain Borsh type decoded from raw bytes with nothing that says
+          // which type the bytes are. Another account of this program with a compatible
+          // layout (or a forged one) decodes just as well.
+          if (local && d.how === "try_from_slice" && !checksDisc && !writesBack) {
+            add({ rule: "type-cosplay", severity: "high", confidence: "medium", struct: s.name, field: f.name, file: s.file, line: f.line,
+              title: `\`${f.name}\` is decoded as \`${d.type}\` with no type discriminator`,
+              why: `\`${d.type}\` is a plain Borsh struct${disc ? ` whose \`${disc}\` field is never checked` : " with no discriminator field"}: any account with a compatible layout decodes as \`${d.type}\`, so a caller can pass a different account type of this program and have it read as a \`${d.type}\`.`,
+              fix: `Make \`${d.type}\` an \`#[account]\` and load it as \`Account<'info, ${d.type}>\` (Anchor checks the 8-byte discriminator), or add a discriminator field and check it.`,
+              snippet: snippetOf(s.raw, f.line) });
+          }
+          // Account data matching: decoded, used, and never compared to what it should be.
+          const compared = new RegExp(`\\b${d.v}\\s*\\.\\s*\\w+\\s*(==|!=)|(==|!=)\\s*&?\\s*${d.v}\\s*\\.\\s*\\w+|require\\w*!\\s*\\([^;]*\\b${d.v}\\s*\\.\\s*\\w+`).test(hText);
+          if (!compared && !writesBack) {
+            add({ rule: "unmatched-account-data", severity: "high", confidence: "medium", struct: s.name, field: f.name, file: s.file, line: f.line,
+              title: `\`${f.name}\` is used without checking it is the right account`,
+              why: `The handler decodes \`${f.name}\` as \`${d.type}\` and uses its contents, but never compares any of its fields (owner, mint, authority) to the accounts of this instruction: any \`${d.type}\` will do, someone else's included.`,
+              fix: `Compare the decoded fields to the expected keys (\`${d.v}.owner == authority.key()\`), or load it as a typed account with \`has_one\` / \`constraint\`.`,
+              snippet: snippetOf(s.raw, f.line) });
+          }
+        }
+        if (reads && !ownerChecked && decoded.every((d) => new RegExp(`\\b${d.v}\\s*\\.\\s*\\w+\\s*(==|!=)|(==|!=)\\s*&?\\s*${d.v}\\s*\\.\\s*\\w+`).test(hText))) {
           add({ rule: "unverified-account-data", severity: "high", confidence: "medium", struct: s.name, field: f.name, file: s.file, line: f.line,
             title: `\`${f.name}\`'s data is trusted without checking who owns it`,
             why: `The handler reads \`${f.name}\`'s bytes, but \`${f.name}\` is a raw ${f.kind} and neither a constraint nor the handler checks its owner. Anyone can create an account with the same layout, owned by their own program, holding whatever values suit them.`,
@@ -425,7 +536,10 @@ export function analyzeAnchor(programDirs, repoDir) {
     // every mutable copy back at exit, so the last copy wins.
     const groups = new Map();
     for (const f of s.fields) {
-      if (!f.c.mut || !["Account", "AccountLoader", "InterfaceAccount"].includes(f.kind) || !f.inner) continue;
+      // Mutable by constraint, or written by the handler (`&mut ctx.accounts.x`, `x.field = ..`):
+      // a transaction can mark the account writable without the struct saying `mut`.
+      const written = new RegExp(`&mut\\s+[\\w.]*\\b${f.name}\\b|\\b${f.name}\\s*\\.\\s*\\w+\\s*([+\\-*/]?=)(?!=)`).test(runText);
+      if (!(f.c.mut || written) || !["Account", "AccountLoader", "InterfaceAccount"].includes(f.kind) || !f.inner) continue;
       const k = `${f.kind}<${f.inner}>`;
       if (!groups.has(k)) groups.set(k, []);
       groups.get(k).push(f);
@@ -486,13 +600,13 @@ export function analyzeAnchor(programDirs, repoDir) {
     // remaining_accounts used without owner or key checks.
     for (const h of hs) {
       if (!/remaining_accounts/.test(h.body)) continue;
-      if (/\.owner\b|(Account|AccountLoader|InterfaceAccount)(::<[^>]*>)?::try_from|\.key\(\)\s*(==|!=)|key\s*==|find_program_address|create_program_address/.test(h.body)) continue;
-      // Only passed through to a CPI (proof nodes to a Merkle tree program, extra accounts to
-      // a router), never read here: the program receiving them is the one that checks them.
-      const forwarded = /\binvoke(_signed)?\s*\(|with_remaining_accounts\s*\(|CpiContext::new/.test(h.body);
+      // Reported only when the handler itself reads their bytes or moves their lamports.
+      // Handed to a helper (load_maps(remaining_accounts), a parser) or to a CPI, they are
+      // checked there: production programs validate them in shared loaders.
       const readsThem = /remaining_accounts[^;]*?(try_borrow_data|data\s*\.\s*borrow|try_from_slice|try_deserialize|from_le_bytes|lamports\s*\(\s*\)\s*\.\s*borrow_mut|try_borrow_mut_lamports)/.test(h.body)
         || /for\s+(\w+)\s+in\s+[^{]*remaining_accounts[\s\S]*?\{[\s\S]*?\b\1\s*\.\s*(try_borrow_data|data\s*\.\s*borrow|try_borrow_mut_lamports)/.test(h.body);
-      if (forwarded && !readsThem) continue;
+      if (!readsThem) continue;
+      if (/\.owner\b|(Account|AccountLoader|InterfaceAccount)(::<[^>]*>)?::try_from|\.key\(\)\s*(==|!=)|key\s*==|find_program_address|create_program_address/.test(reachableText([h.body]))) continue;
       const line = h.line + h.body.slice(0, h.body.indexOf("remaining_accounts")).split("\n").length - 1;
       const f = files.find((x) => x.rel === h.file);
       add({ rule: "unchecked-remaining-accounts", severity: "high", confidence: "medium", struct: s.name, field: "remaining_accounts", file: h.file, line,
@@ -503,6 +617,7 @@ export function analyzeAnchor(programDirs, repoDir) {
     }
   }
 
+  const hasDefund = fnSigs.some((x) => /(==|!=)\s*[\w:]*CLOSED_ACCOUNT_DISCRIMINATOR|CLOSED_ACCOUNT_DISCRIMINATOR\s*(==|!=)/.test(x.body));
   // Code-level rules over every program file.
   for (const f of files) {
     const lines = f.masked.split("\n");
@@ -532,20 +647,32 @@ export function analyzeAnchor(programDirs, repoDir) {
         }
       }
       // Token-2022: plain `transfer` ignores decimals and fails or misbehaves on mints with hooks or fees.
-      if (/token_interface::transfer\s*\(|token_2022::transfer\s*\(|spl_token_2022::instruction::transfer\s*\(/.test(l)) {
+      // A function that also calls transfer_checked branches on the token program (plain
+      // transfer kept for classic SPL Token): deliberate, not a finding.
+      const inFn = fnSigs.find((x) => x.file === f.rel && x.from <= i + 1 && i + 1 <= x.to);
+      if (/token_interface::transfer\s*\(|token_2022::transfer\s*\(|spl_token_2022::instruction::transfer\s*\(/.test(l) && !(inFn && /transfer_checked/.test(inFn.body))) {
         add({ rule: "token2022-unchecked-transfer", severity: "medium", confidence: "high", struct: null, field: null, file: f.rel, line: i + 1,
           title: "Token-2022 transfer without `_checked`",
           why: "`transfer` is deprecated for Token-2022: it skips the mint and decimals check, and does not run transfer hooks. With a mint that has a transfer fee, the amount received differs from the amount sent and your accounting drifts.",
           fix: "Use `transfer_checked` with the mint account and its decimals; account for transfer fees if the mint can have them.",
           snippet: snippetOf(f.raw, i + 1) });
       }
-      // Manual close: lamports drained but the account left behind can be revived.
+      // Manual close: lamports drained but the account left behind can be revived. Judged on
+      // the whole function: safe only when the data is marked closed AND the program can
+      // defund a closed account someone refunded (Anchor's own scheme), or when the account
+      // is reassigned to the system program.
       if (/lamports\s*\(\s*\)\s*\.borrow_mut\(\)\s*=\s*0|\*\*[^=]*lamports[^=]*=\s*0\s*;/.test(l)) {
-        const near = lines.slice(i, i + 8).join(" ");
-        if (!/assign\(|fill\(0\)|realloc\(0|close\(|CLOSED_ACCOUNT_DISCRIMINATOR/.test(near)) {
+        const fn = fnSigs.find((x) => x.file === f.rel && x.from <= i + 1 && i + 1 <= x.to);
+        const body = fn ? fn.body : lines.slice(i, i + 8).join(" ");
+        const isDefund = /(==|!=)\s*[\w:]*CLOSED_ACCOUNT_DISCRIMINATOR|CLOSED_ACCOUNT_DISCRIMINATOR\s*(==|!=)/.test(body);
+        const marked = /CLOSED_ACCOUNT_DISCRIMINATOR/.test(body);
+        const reassigned = /\bassign\s*\(|realloc\s*\(\s*0|\.close\s*\(/.test(body);
+        if (!isDefund && !reassigned && !(marked && hasDefund)) {
           add({ rule: "manual-close-revival", severity: "medium", confidence: "medium", struct: null, field: null, file: f.rel, line: i + 1,
-            title: "Account closed by draining lamports only",
-            why: "Zeroing the lamports does not delete the account before the transaction ends: another instruction in the same transaction can refund it, and the old data, discriminator included, comes back to life.",
+            title: marked ? "Closed account can be revived: no instruction defunds it" : "Account closed by draining lamports, not marked closed",
+            why: marked
+              ? "The data is marked closed, but the lamports are only zeroed for this transaction: another instruction in it can refund the account, and nothing in the program lets anyone drain a closed account afterwards, so it survives as a closed zombie that can be reused."
+              : "Zeroing the lamports does not delete the account before the transaction ends: another instruction in the same transaction can refund it, and its data (zeroed or not) is still there to be read, or re-initialized by a `zero` / init-style instruction.",
             fix: "Use Anchor's `close = recipient` constraint, or zero the data and assign the account to the system program after moving the lamports.",
             snippet: snippetOf(f.raw, i + 1) });
         }
@@ -556,7 +683,7 @@ export function analyzeAnchor(programDirs, repoDir) {
   findings.sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity] || a.file.localeCompare(b.file) || a.line - b.line);
   return {
     findings,
-    stats: { initIfNeeded, files: files.length, structs: structs.length, fields: structs.reduce((n, s) => n + s.fields.length, 0), handlers: [...handlers.values()].reduce((n, h) => n + h.length, 0) },
+    stats: { initIfNeeded, skippedTestPrograms: skipped.map((d) => relative(repoDir, d)), files: files.length, structs: structs.length, fields: structs.reduce((n, s) => n + s.fields.length, 0), handlers: [...handlers.values()].reduce((n, h) => n + h.length, 0) },
     declaredIds: [...new Set(files.flatMap((f) => [...f.raw.matchAll(/declare_id!\s*\(\s*"([1-9A-HJ-NP-Za-km-z]{32,44})"\s*\)/g)].map((m) => m[1])))],
   };
 }
@@ -565,6 +692,10 @@ export function analyzeAnchor(programDirs, repoDir) {
 // "checked and found nothing", never as "did not look".
 export const RULES = [
   { id: "missing-signer", name: "Authority that never has to sign", scope: "every authority-like account" },
+  { id: "unmatched-account-data", name: "Account data not matched to the expected accounts", scope: "every account decoded by hand" },
+  { id: "type-cosplay", name: "Type cosplay (no discriminator)", scope: "every Borsh type decoded from raw bytes" },
+  { id: "bump-canonicalization", name: "Non-canonical PDA bump", scope: "every create_program_address" },
+  { id: "pda-sharing", name: "PDA signer shared across accounts", scope: "every PDA signature" },
   { id: "reinit-takeover", name: "Re-initialization takeover (init_if_needed)", scope: "every init_if_needed state account" },
   { id: "duplicate-mutable-accounts", name: "Same account passed twice (write-back)", scope: "every pair of mutable program-owned accounts" },
   { id: "arbitrary-cpi", name: "Unchecked CPI target", scope: "every program account taken raw" },
