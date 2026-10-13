@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import FreeTools from "./FreeTools.jsx";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "https://solana-security-watchdog-scan.fly.dev";
@@ -6,6 +6,9 @@ const EVM_BASE = import.meta.env.VITE_EVM_API_BASE || "https://evm-watchdog-scan
 
 // Launched from the Android app (Seeker / Solana dApp Store): its start URL
 // carries ?app=seeker, and a Trusted Web Activity runs in standalone mode.
+// /agents is the agent page (x402, MCP, endpoints); / is for people.
+const IS_AGENTS = typeof window !== "undefined" && /^\/agents\/?$/.test(window.location.pathname);
+
 const IN_APP =
   typeof window !== "undefined" &&
   (new URLSearchParams(window.location.search).get("app") === "seeker" ||
@@ -125,6 +128,106 @@ export default function App() {
     );
   }
 
+  if (IS_AGENTS) return <Agents scope={scope} />;
+
+  return (
+    <div className="wrap">
+      <header>
+        <div className="brand"><Logo size={34} /><span className="bt"><span className="g">Watchdog</span></span><span className="chains">Solana</span></div>
+        <nav className="nav">
+          <a href="#tools">Free check</a>
+          <a href="#report">The report</a>
+          <a href="/sample-report.html">Sample</a>
+          <a href="#pricing">Pricing</a>
+          <a href="/agents">For agents</a>
+        </nav>
+      </header>
+
+      <div className="hero">
+        <div className="eyebrow">Security review for Solana programs</div>
+        <h1>Check a Solana program <em>before</em> you put money in</h1>
+        <p className="sub">See in seconds who can replace a program's code, and how fast. Scan a project's source the way an auditor reads it first: every account, every constraint, every dependency that ships on-chain. Free to try, no account.</p>
+      </div>
+
+      <section id="tools">
+        <FreeTools />
+      </section>
+
+      <section id="report">
+        <h2>What the full report covers</h2>
+        <div className="moments">
+          <div className="moment">
+            <div className="when">The code</div>
+            <h3>Every Anchor account, read like an auditor</h3>
+            <p>Missing signers, accounts passed twice, re-initialization takeovers, unchecked CPI targets, data trusted from an account of unknown owner, bounds checked on a truncated value. Each issue comes with the code, why it is exploitable, and the fix.</p>
+          </div>
+          <div className="moment">
+            <div className="when">The dependencies</div>
+            <h3>Only what ships on-chain</h3>
+            <p>The crates that really compile into the program for the Solana target, out of hundreds in the lockfile, each advisory judged for on-chain reach. No noise from the CLI or the test validator.</p>
+          </div>
+          <div className="moment">
+            <div className="when">The chain</div>
+            <h3>The program as deployed</h3>
+            <p>Who can upgrade it (one key, a multisig and its time lock, or nobody), when it last changed, whether the binary matches public source, and how to report a bug.</p>
+          </div>
+          <div className="moment">
+            <div className="when">Proof</div>
+            <h3>A real report, anonymized</h3>
+            <p>A Solana DeFi protocol of about 11,000 lines of Anchor, at a commit where a write-back bug was still present. Watchdog found it, the same one a manual review had found.</p>
+            <div className="buy"><a className="btn ghost" href="/sample-report.html">Read the sample report</a></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="pricing">
+        <h2>Pricing</h2>
+        <div className="moments">
+          <div className="moment">
+            <div className="when">Free</div>
+            <h3>Program check</h3>
+            <p>Upgrade authority, multisig rules, last code change, verified build, security contact. Any program on mainnet.</p>
+          </div>
+          <div className="moment">
+            <div className="when">Free</div>
+            <h3>Repo preview</h3>
+            <p>The full scan runs: risk rating, counts, coverage, the deployed program and the first issue in full.</p>
+          </div>
+          <div className="moment">
+            <div className="when">1 SOL or 99 USDC</div>
+            <h3>Full report</h3>
+            <p>Every issue with its code and fix, every note to verify, every dependency judged. By email, as a page you can share with your team.</p>
+          </div>
+          <div className="moment">
+            <div className="when">On quote</div>
+            <h3>Get it fixed</h3>
+            <p>A pull request on your repository: for each confirmed issue, a failing test, the fix, and the test passing. You review and merge.</p>
+          </div>
+        </div>
+      </section>
+
+      {scope}
+
+      <section id="proof" className="proof">
+        <h2>Verify before you pay</h2>
+        <ul>
+          <li><a href="https://github.com/OxToF/solana-security-watch">solana-security-watch</a>: the scanner and 5 executable proofs of known Solana bug classes</li>
+          <li><a href="https://github.com/OxToF/solana-security-watch/blob/main/skills/solana-security-watch/solidity-to-anchor.md">Porting Solidity to Anchor: the traps</a></li>
+          <li><a href="/sample-report.html">A real report, anonymized</a>: a Solana DeFi protocol in which the engine found the write-back bug a manual review had found</li>
+        </ul>
+      </section>
+
+      <section className="agents-cta">
+        <div className="scope"><strong>Building an agent?</strong> Watchdog also sells each check per call over x402, from a few cents, with an MCP server for Claude and Cursor. <a href="/agents">See the agent API</a>.</div>
+      </section>
+
+      <footer>Solana Watchdog. Open source under the MIT license. Checks, not a certified audit. <a href="/agents">For agents</a> · <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a></footer>
+    </div>
+  );
+}
+
+function Agents({ scope }) {
+  useEffect(() => { document.title = "Watchdog x402: Solana and EVM security checks your agent pays for"; }, []);
   return (
     <div className="wrap">
       <header>
@@ -132,7 +235,7 @@ export default function App() {
         <nav className="nav">
           <a href="#mcp">MCP</a>
           <a href="#endpoints">Endpoints</a>
-          <a href="#browser">Scan in browser</a>
+          <a href="/">For people</a>
           <a href="https://github.com/OxToF/watchdog-mcp">GitHub</a>
         </nav>
       </header>
@@ -205,25 +308,18 @@ export default function App() {
         </div>
       </section>
 
-      <section id="browser">
-        <h2>Try it in your browser</h2>
-        <p className="lead">Check who controls any Solana program, free. Scan a public Rust / Anchor repo and get a free preview; the full report with every file and line unlocks in USDC.</p>
-        <FreeTools />
-      </section>
-
       {scope}
 
-      <section id="proof" className="proof">
+      <section className="proof">
         <h2>Verify before you pay</h2>
         <ul>
           <li><a href="https://github.com/OxToF/watchdog-mcp">watchdog-mcp</a>: the MCP server, open source, with its payment guards tested</li>
-          <li><a href="https://github.com/OxToF/solana-security-watch">solana-security-watch</a>: the scanner and 5 executable proofs of known Solana bug classes</li>
-          <li><a href="https://github.com/OxToF/solana-security-watch/blob/main/skills/solana-security-watch/solidity-to-anchor.md">Porting Solidity to Anchor: the traps</a></li>
-          <li><a href="/sample-report.html">A real report, anonymized</a>: a Solana DeFi protocol in which the engine found the write-back bug a manual review had found</li>
+          <li><a href="https://github.com/OxToF/solana-security-watch">solana-security-watch</a>: the engine and 5 executable proofs of known Solana bug classes</li>
         </ul>
+        <p className="small">Checking a program or a repo yourself? <a href="/">The free tools are here</a>.</p>
       </section>
 
-      <footer>Solana Watchdog and EVM Watchdog. Open source under the MIT license. Checks, not a certified audit. <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a></footer>
+      <footer>Solana Watchdog and EVM Watchdog. Open source under the MIT license. Checks, not a certified audit. <a href="/">Home</a> · <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a></footer>
     </div>
   );
 }
