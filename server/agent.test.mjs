@@ -152,6 +152,7 @@ before(async () => {
       SOLANA_DEVNET_RPC_URL: `http://127.0.0.1:${rpc.address().port}`,
       CRATES_INDEX_URL: "http://127.0.0.1:1",
       PAY_WATCH_MS: "100",
+      OPENAI_API_KEY: "",
       ALLOW_ORIGIN: "https://site.example, https://alias.example/",
       ALLOW_LOCAL: "1",
       FREE_SCANS_PER_HOUR: "2",

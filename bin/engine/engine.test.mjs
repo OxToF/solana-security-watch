@@ -219,3 +219,49 @@ pub fn send(a: u64) -> Result<()> {
     if is_2022 { token_interface::transfer_checked(cpi, a, d) } else { token_interface::transfer(cpi, a) }
 }`).findings.length, 0);
 });
+
+test("AI review: verdicts reshape the report, a failure changes nothing, nothing runs without a key", async () => {
+  const { triageFindings } = await import("./triage.mjs");
+  const { partition } = await import("./report.mjs");
+  const dir = join(ROOT, "poc", "duplicate-mutable");
+  const mk = () => [
+    { rule: "a", severity: "high", confidence: "medium", title: "real", why: "w", fix: "f", file: "programs/duplicate-mutable/src/lib.rs", line: 10 },
+    { rule: "b", severity: "high", confidence: "medium", title: "noise", why: "w", fix: "f", file: "programs/duplicate-mutable/src/lib.rs", line: 20 },
+    { rule: "c", severity: "low", confidence: "low", title: "note", why: "w", fix: "f", file: "programs/duplicate-mutable/src/lib.rs", line: 30 },
+    { rule: "d", severity: "high", confidence: "medium", title: "boom", why: "w", fix: "f", file: "programs/duplicate-mutable/src/lib.rs", line: 40 },
+  ];
+  const verdicts = { a: "confirmed", b: "false_positive", c: "confirmed" };
+  const sent = [];
+  const fakeFetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    sent.push({ url, auth: init.headers.authorization, body });
+    const rule = /Rule: (\w+)/.exec(body.messages[1].content)[1];
+    if (rule === "d") return new Response("{}", { status: 500 });
+    return Response.json({ choices: [{ message: { content: JSON.stringify({ verdict: verdicts[rule], reasoning: `why ${rule}`, attack: "pass the same pool twice" }) } }], usage: { prompt_tokens: 100, completion_tokens: 20 } });
+  };
+  const files = ["programs/duplicate-mutable/src/lib.rs"];
+  const saved = { k: process.env.OPENAI_API_KEY, m: process.env.OPENAI_MODEL };
+  try {
+    delete process.env.OPENAI_API_KEY;
+    const off = await triageFindings(mk(), { repoDir: dir, programFiles: files, fetchImpl: fakeFetch });
+    assert.equal(off.ran, false);
+    assert.equal(sent.length, 0);
+
+    process.env.OPENAI_API_KEY = "sk-test"; process.env.OPENAI_MODEL = "test-model";
+    const fs = mk();
+    const st = await triageFindings(fs, { repoDir: dir, programFiles: files, fetchImpl: fakeFetch });
+    assert.deepEqual([st.reviewed, st.confirmed, st.falsePositive, st.failed], [3, 2, 1, 1]);
+    assert.deepEqual(st.usage, { input: 300, output: 60 });
+    assert.equal(sent[0].auth, "Bearer sk-test");
+    assert.equal(sent[0].body.model, "test-model");
+    assert.match(sent[0].body.messages[1].content, /lib\.rs/); // the code is in the prompt
+    const p = partition(fs);
+    // Confirmed note promoted, ruled-out finding set apart, failed call left as the rules wrote it.
+    assert.deepEqual(p.confident.map((f) => f.title), ["real", "note", "boom"]);
+    assert.deepEqual(p.dismissed.map((f) => f.title), ["noise"]);
+    assert.equal(fs[3].ai, undefined);
+  } finally {
+    if (saved.k === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = saved.k;
+    if (saved.m === undefined) delete process.env.OPENAI_MODEL; else process.env.OPENAI_MODEL = saved.m;
+  }
+});
