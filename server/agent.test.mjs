@@ -664,9 +664,24 @@ test("free tier end to end: program check without payment, repo preview, rate li
   const confirm = await fetch(`${base}/confirm`, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer test-admin" }, body: JSON.stringify({ jobId }) });
   assert.equal(confirm.status, 404);
 
-  // FREE_SCANS_PER_HOUR=2 in this server: the third new repo is refused.
-  assert.equal((await call("/free/scan", { local: `${local}/` })).status, 202);
-  assert.equal((await call("/free/scan", { local: `${local}//` })).status, 429);
+  // One free preview per device: another repo on this device goes to the full report.
+  const quota = await call("/free/scan", { local: `${local}/` });
+  assert.equal(quota.status, 402);
+  const terms = await quota.json();
+  assert.equal(terms.priceSol, 0.1);
+  assert.equal(terms.priceUsd, 69);
+  // An example repo stays free on the same device.
+  assert.notEqual((await call("/free/scan", { repo: "https://github.com/solana-developers/program-examples" })).status, 402);
+
+  // Another device has its own free preview; FREE_SCANS_PER_HOUR=2 per address still holds.
+  assert.equal((await call("/free/scan", { local: `${local}/`, device: "device2222222222222222" })).status, 429);
+  const other = (body, ipAddr) => fetch(`${base}/free/scan`, { method: "POST", headers: { "content-type": "application/json", "fly-client-ip": ipAddr }, body: JSON.stringify(body) });
+  assert.equal((await other({ local: `${local}/`, device: "device3333333333333333" }, "10.6.6.6")).status, 202);
+
+  // A preview that fails (no such path) gives the free one back.
+  const failed = await (await other({ local: "/no/such/repo", device: "device4444444444444444" }, "10.5.5.5")).json();
+  for (let i = 0; i < 100; i++) { const v = await (await fetch(failed.statusUrl)).json(); if (v.status === "error") break; await new Promise((r) => setTimeout(r, 100)); }
+  assert.equal((await other({ local: `${local}//`, device: "device4444444444444444" }, "10.5.5.5")).status, 202);
 });
 
 // --- web unlock in SOL or USDC ------------------------------------------------------

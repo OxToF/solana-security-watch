@@ -229,8 +229,10 @@ function RepoScan({ request }) {
     setRepo(target);
     setBusy(true);
     try {
-      const r = await fetch(`${API_BASE}/free/scan`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ repo: target }) });
+      const r = await fetch(`${API_BASE}/free/scan`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ repo: target, device: deviceId() }) });
       const j = await r.json().catch(() => ({}));
+      // Free preview used: straight to the full report for this repo.
+      if (r.status === 402) { setState({ status: "paywall", message: j.message, unlockPriceSol: j.priceSol, unlockPriceUsd: j.priceUsd }); setBusy(false); return; }
       if (!r.ok) throw new Error(j.error || "Could not start the scan.");
       setState({ status: j.status });
       const tick = async () => {
@@ -304,9 +306,21 @@ function RepoScan({ request }) {
   }
 
   const p = state?.preview?.risk ? state.preview : null;
+  const unlockBox = (title, lead) => (
+    <div className="unlock">
+      <h4>{title}</h4>
+      {lead && <p className="hint">{lead}</p>}
+      <p className="hint">Every issue with its code, why it is exploitable and how to fix it, the deployed program, and every dependency judged for on-chain reach. By email, as a page you can share with your team. <a href="/sample-report.html" target="_blank" rel="noreferrer">This is what you get</a>.</p>
+      <div className="connect-row"><WalletMultiButton /></div>
+      <input className="fld" type="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+      <button className="btn pay" onClick={() => unlock("SOL")} disabled={busy}>{busy ? "Working…" : `Pay ${priceSol} SOL`}</button>
+      <button className="btn ghost pay" onClick={() => unlock("USDC")} disabled={busy}>{`or pay ${price} USDC`}</button>
+      {payMsg && <div className={`msg ${payMsg.kind}`}>{payMsg.text}</div>}
+    </div>
+  );
   return (
     <div className="tool">
-      <p className="tool-lead">Reads the program as Anchor does: every account, constraint and handler, the dependencies that really compile into it, and the deployed program on-chain. <b>The preview is free</b>; the full report unlocks for {priceSol} SOL. <a href="/sample-report.html" target="_blank" rel="noreferrer">See a real report</a>.</p>
+      <p className="tool-lead">Reads the program as Anchor does: every account, constraint and handler, the dependencies that really compile into it, and the deployed program on-chain. <b>Your first preview is free</b>; the full report unlocks for {priceSol} SOL. The examples are always free. <a href="/sample-report.html" target="_blank" rel="noreferrer">See a real report</a>.</p>
       <div className="row">
         <input className="fld" type="url" placeholder="https://github.com/org/repo" value={repo} onChange={(e) => setRepo(e.target.value)} spellCheck={false} autoCapitalize="off" />
         <button className="btn" onClick={() => scan()} disabled={busy}>{busy && !p ? "Scanning…" : "Free scan"}</button>
@@ -317,8 +331,9 @@ function RepoScan({ request }) {
         <button type="button" className="pick" disabled={busy} onClick={() => scan("https://github.com/solana-developers/program-examples")}>program-examples</button>
       </div>
       {err && <div className="msg err">{err}</div>}
-      {state && !p && state.status !== "error" && <div className="msg">Cloning and scanning. About a minute…</div>}
+      {state && !p && state.status !== "error" && state.status !== "paywall" && <div className="msg">Cloning and scanning. About a minute…</div>}
       {state?.status === "error" && <div className="msg err">{state.error}</div>}
+      {state?.status === "paywall" && unlockBox(`Full report for ${repo.replace("https://github.com/", "")}: ${priceSol} SOL`, state.message)}
       {p && (
         <div className={`result tone-${RISK[p.risk].tone}`}>
           <div className="hint">{p.repo}{p.commit ? ` · ${p.commit.slice(0, 7)}` : ""}</div>
@@ -354,17 +369,7 @@ function RepoScan({ request }) {
           {p.hidden.advisories > 0 && <div className="lock-note">🔒 {p.hidden.advisories} more dependency advisor{p.hidden.advisories > 1 ? "ies" : "y"}, each judged for on-chain reach, in the full report</div>}
           {p.hidden.review > 0 && <div className="lock-note">🔒 {p.hidden.review} point{p.hidden.review > 1 ? "s" : ""} to verify, with code and reasoning</div>}
 
-          {(p.hidden.findings.length > 0 || p.hidden.advisories > 0 || p.hidden.review > 0) && (
-            <div className="unlock">
-              <h4>Unlock the full report: {priceSol} SOL</h4>
-              <p className="hint">Every issue with its code, why it is exploitable and how to fix it, the deployed program, and every dependency judged for on-chain reach. By email, as a page you can share with your team. <a href="/sample-report.html" target="_blank" rel="noreferrer">This is what you get</a>.</p>
-              <div className="connect-row"><WalletMultiButton /></div>
-              <input className="fld" type="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
-              <button className="btn pay" onClick={() => unlock("SOL")} disabled={busy}>{busy ? "Working…" : `Pay ${priceSol} SOL`}</button>
-              <button className="btn ghost pay" onClick={() => unlock("USDC")} disabled={busy}>{`or pay ${price} USDC`}</button>
-              {payMsg && <div className={`msg ${payMsg.kind}`}>{payMsg.text}</div>}
-            </div>
-          )}
+          {(p.hidden.findings.length > 0 || p.hidden.advisories > 0 || p.hidden.review > 0) && unlockBox(`Unlock the full report: ${priceSol} SOL`)}
           <p className="hint">{p.disclaimer}</p>
         </div>
       )}
@@ -381,7 +386,7 @@ export default function FreeTools() {
     <div className="scanbox" ref={box}>
       <div className="tabs" role="tablist">
         <button role="tab" aria-selected={tab === "program"} className={tab === "program" ? "on" : ""} onClick={() => { setScanRequest(null); setTab("program"); }}>Check a program <span className="free">1st free</span></button>
-        <button role="tab" aria-selected={tab === "repo"} className={tab === "repo" ? "on" : ""} onClick={() => { setScanRequest(null); setTab("repo"); }}>Scan a repo <span className="free">free preview</span></button>
+        <button role="tab" aria-selected={tab === "repo"} className={tab === "repo" ? "on" : ""} onClick={() => { setScanRequest(null); setTab("repo"); }}>Scan a repo <span className="free">1st free</span></button>
       </div>
       {tab === "program" ? <ProgramCheck onScan={toScan} /> : <RepoScan request={scanRequest} />}
     </div>
