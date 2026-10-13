@@ -32,9 +32,9 @@ import { Watcher, checkWebhookUrl, newSecret, programSnapshot, diffProgram, lock
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
-const PRICE_USD = Number(process.env.SCAN_PRICE_USD || 9); // web: a human unlocks the full branded report by email
+const PRICE_USD = Number(process.env.SCAN_PRICE_USD || 99); // web: a human unlocks the full branded report by email
 // The same unlock in SOL, at a fixed price: every Seeker holds SOL, not always USDC.
-const PRICE_SOL = Number(process.env.SCAN_PRICE_SOL || 0.1);
+const PRICE_SOL = Number(process.env.SCAN_PRICE_SOL || 1);
 // Free tier, per visitor: a few repo previews an hour, program checks more freely.
 // A free scan shares the queue with paid ones, so past a few waiting it is refused.
 const FREE_SCANS_PER_HOUR = Number(process.env.FREE_SCANS_PER_HOUR || 3);

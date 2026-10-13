@@ -33,6 +33,11 @@ const KB = {
   },
 };
 
+// Thread-safety defects (data races, unsound Send/Sync) need two threads. A program runs
+// on one: the SBF runtime has no threads, so none of them can be triggered on-chain.
+const THREADING = /data race|race condition|\bSend\b|\bSync\b|thread[- ]safe|thread[- ]safety|across threads/i;
+const THREADING_NOTE = "A thread-safety defect needs two threads sharing memory. A Solana program runs on a single thread (the SBF runtime has none), so it cannot be triggered on-chain.";
+
 export function severityLabel(s) {
   const k = String(s || "").toUpperCase();
   if (k.startsWith("CVSS:")) {
@@ -57,6 +62,7 @@ export function judgeAdvisories(advisories, closure, programSource = "") {
     const reaching = closure ? a.crates.filter((c) => closure.crates.has(c)) : [];
     const entry = { ...a, severity: severityLabel(a.severity), onchain: reaching.length > 0, reachingCrates: reaching };
     const kb = KB[a.id] || (a.aliases || []).map((id) => KB[id]).find(Boolean);
+    if (!kb && entry.onchain && THREADING.test(a.summary)) { entry.verdict = "not-exploitable"; entry.note = THREADING_NOTE; }
     if (kb && entry.onchain) {
       const cleared = kb.check ? kb.check(programSource) : null;
       entry.verdict = cleared ? "not-exploitable" : kb.verdict;

@@ -219,7 +219,7 @@ export default function App() {
           <li><a href="https://github.com/OxToF/watchdog-mcp">watchdog-mcp</a>: the MCP server, open source, with its payment guards tested</li>
           <li><a href="https://github.com/OxToF/solana-security-watch">solana-security-watch</a>: the scanner and 5 executable proofs of known Solana bug classes</li>
           <li><a href="https://github.com/OxToF/solana-security-watch/blob/main/skills/solana-security-watch/solidity-to-anchor.md">Porting Solidity to Anchor: the traps</a></li>
-          <li><a href="https://github.com/OxToF/solana-security-watch/blob/main/examples/sample-scan-report.html">A sample scan report</a></li>
+          <li><a href="/sample-report.html">A real report, anonymized</a>: a Solana DeFi protocol in which the engine found the write-back bug a manual review had found</li>
         </ul>
       </section>
 

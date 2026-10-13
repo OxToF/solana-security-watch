@@ -1,0 +1,180 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Watchdog report · Anonymized DeFi protocol</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#eceef4;color:#1c2030;font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+.doc{max-width:880px;margin:28px auto;background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 12px 40px rgba(20,20,50,.12)}
+.hd{background:linear-gradient(125deg,#1a0f36 0%,#0e1730 60%,#0a1f2b 100%);color:#fff;padding:24px 36px;display:flex;align-items:center;gap:16px;position:relative}
+.hd::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:linear-gradient(90deg,#9945FF,#14F195)}
+.wm{font-weight:800;letter-spacing:.5px;font-size:1.1rem;line-height:1.1}.wm .g{background:linear-gradient(90deg,#b98cff,#14F195);-webkit-background-clip:text;background-clip:text;color:transparent}
+.tl{color:#a9b0cf;font-size:.8rem;margin-top:3px}.meta{margin-left:auto;text-align:right;color:#a9b0cf;font-size:.78rem;line-height:1.5}.meta b{color:#fff}
+main{padding:26px 36px 34px}
+h1{font-size:1.55rem;margin:0;letter-spacing:-.01em;word-break:break-word}h1 a{color:inherit;text-decoration:none}
+.sub{color:#6b7188;font-size:.85rem;margin-top:2px}
+.verdict-box{margin:20px 0 8px;border-radius:14px;padding:18px 20px}
+.verdict-box .top{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+.verdict-box .rating{font-size:.72rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;opacity:.85}
+.verdict-box .big{font-size:1.6rem;font-weight:800;line-height:1.1}
+.verdict-box p{margin:0;color:#2a2f45}
+@media(max-width:640px){main{padding:20px}}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0 4px}@media(max-width:640px){.cards{grid-template-columns:repeat(2,1fr)}}
+.card{background:#f7f8fc;border:1px solid #eaecf3;border-radius:12px;padding:12px 14px}.card .n{font-size:1.5rem;font-weight:800;line-height:1.1}.card .l{color:#6b7188;font-size:.76rem;margin-top:4px;line-height:1.3}
+h2{font-size:1.08rem;margin:34px 0 12px;padding-left:12px;border-left:4px solid #9945FF;line-height:1.2}
+.muted{color:#6b7188}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.86em;background:#f1f2f7;border-radius:5px;padding:.05em .35em;word-break:break-word}
+.chip{display:inline-block;border-radius:6px;padding:.12rem .5rem;font-size:.7rem;font-weight:800;letter-spacing:.02em;white-space:nowrap}
+.finding{border:1px solid #e6e8f0;border-radius:14px;padding:16px 18px;margin:14px 0}
+.finding header{display:flex;gap:8px;align-items:center}.ref{font-weight:800;color:#4f2bbd;font-size:.82rem}.conf{margin-left:auto;color:#8189a3;font-size:.76rem}
+.finding h3{margin:8px 0 2px;font-size:1.02rem;line-height:1.35}.loc{font-size:.82rem;color:#5b6178}.loc a{color:#4f2bbd}
+pre.code{background:#0f1222;color:#d7dbf0;border-radius:10px;padding:10px 0;margin:10px 0;overflow-x:auto;font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}
+pre.code .ln{display:block;padding:0 14px;white-space:pre}pre.code .ln i{display:inline-block;width:3.2em;color:#5b6283;font-style:normal;user-select:none}
+pre.code .focus{background:rgba(153,69,255,.28);box-shadow:inset 3px 0 0 #b98cff}
+.kv{margin-top:8px}.kv b{font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:#6b7188}.kv p{margin:2px 0 0}
+.fixlink{display:inline-block;margin-top:10px;font-size:.84rem;font-weight:700;color:#6d3bd6;text-decoration:none}
+.clean{color:#047857;background:#e6f7ef;border:1px solid #bfe9d5;border-radius:10px;padding:11px 14px;font-weight:600}
+details{border:1px solid #e6e8f0;border-radius:12px;padding:10px 14px;margin:10px 0}details summary{cursor:pointer;font-weight:700}
+details .item{border-top:1px solid #eef0f5;padding:10px 0}details .item:first-of-type{border-top:0}
+.prog{border:1px solid #e6e8f0;border-left-width:4px;border-radius:12px;padding:14px 16px;margin:10px 0}.prog.bad{border-left-color:#dc2626}.prog.mid{border-left-color:#d97706}.prog.ok{border-left-color:#059669}
+.prog-h{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.tag{font-size:.72rem;font-weight:800;text-transform:uppercase;background:#eef0f6;color:#4a5069;border-radius:6px;padding:.1rem .45rem}
+.auth{margin:8px 0;font-weight:600}dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;margin:6px 0 0;font-size:.88rem}dt{color:#6b7188}dd{margin:0;word-break:break-all}
+.flags{list-style:none;padding:0;margin:10px 0 0;font-size:.88rem}.flags li{margin:6px 0}
+.adv{display:flex;gap:12px;padding:11px 0;border-top:1px solid #eef0f5}.adv:first-child{border-top:0}.adv a{font-weight:700;color:#4f2bbd}
+.verdict{margin-top:5px;font-size:.86rem;border-radius:8px;padding:6px 10px}.verdict.not-exploitable{background:#e6f7ef;color:#065f46}.verdict.conditional{background:#fef7dc;color:#713f12}.verdict.exploitable{background:#fde8e8;color:#7f1d1d}
+table{width:100%;border-collapse:collapse;font-size:.88rem}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid #eef0f5;vertical-align:top}th{color:#6b7188;font-weight:600;font-size:.78rem;text-transform:uppercase;letter-spacing:.03em}
+td.res{white-space:nowrap;font-weight:700}td.res.ok{color:#047857}td.res.hit{color:#c2410c}td.res.note{color:#a16207}
+.cta{display:flex;gap:16px;align-items:center;justify-content:space-between;background:#f6f1ff;border:1px solid #e2d4ff;border-radius:14px;padding:16px 18px;margin:28px 0 6px}
+.cta-btn{flex:none;background:linear-gradient(90deg,#9945FF,#6d4bd6);color:#fff!important;font-weight:700;border-radius:10px;padding:10px 16px;text-decoration:none;white-space:nowrap}
+.limits{background:#f7f8fc;border-radius:12px;padding:14px 16px;font-size:.88rem;color:#3a4058}.limits ul{margin:6px 0 0;padding-left:18px}
+.ft{display:flex;gap:10px;align-items:center;color:#8189a3;font-size:.78rem;padding:16px 36px;border-top:1px solid #eef0f5}.ft a{color:#6d3bd6}
+@media print{body{background:#fff}.doc{box-shadow:none;margin:0;border-radius:0}details{break-inside:avoid}details:not([open])>*:not(summary){display:block}.finding{break-inside:avoid}}
+</style></head><body><div class="doc">
+<div class="hd"><svg width="46" height="46" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Solana Watchdog"><defs><linearGradient id="wg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#9945FF"/><stop offset="1" stop-color="#14F195"/></linearGradient></defs><circle cx="32" cy="32" r="30" fill="url(#wg)"/><path d="M16 24 L21 7 L27 20 Z" fill="#efe7d6"/><path d="M48 24 L43 7 L37 20 Z" fill="#efe7d6"/><path d="M19.5 21 L21.6 12 L24.4 19 Z" fill="#b98cff"/><path d="M44.5 21 L42.4 12 L39.6 19 Z" fill="#b98cff"/><ellipse cx="32" cy="34" rx="15" ry="14" fill="#f4eddd"/><ellipse cx="32" cy="41" rx="8" ry="6.5" fill="#fffaf0"/><path d="M21.5 29 L28 30.5" stroke="#3a3550" stroke-width="1.6" stroke-linecap="round"/><path d="M42.5 29 L36 30.5" stroke="#3a3550" stroke-width="1.6" stroke-linecap="round"/><circle cx="26" cy="33" r="3" fill="#20202f"/><circle cx="38" cy="33" r="3" fill="#20202f"/><circle cx="27" cy="32.1" r=".9" fill="#fff"/><circle cx="39" cy="32.1" r=".9" fill="#fff"/><ellipse cx="32" cy="38.5" rx="2.7" ry="2" fill="#20202f"/><path d="M32 40.5 Q28 44 25 42" stroke="#20202f" stroke-width="1.4" fill="none" stroke-linecap="round"/><path d="M32 40.5 Q36 44 39 42" stroke="#20202f" stroke-width="1.4" fill="none" stroke-linecap="round"/><circle cx="45" cy="45" r="7.5" fill="rgba(255,255,255,.18)" stroke="#20202f" stroke-width="2.4"/><path d="M50.4 50.4 L57 57" stroke="#20202f" stroke-width="3.4" stroke-linecap="round"/></svg><div><div class="wm">SOLANA <span class="g">WATCHDOG</span></div><div class="tl">Automated security review</div></div>
+<div class="meta">Report <b>2026-10-13</b></div></div>
+<main><div style="background:#f6f1ff;border:1px solid #e2d4ff;border-radius:12px;padding:12px 16px;margin:0 0 18px;font-size:.9rem;color:#3a2a6c"><b>Sample report.</b> A real Solana DeFi protocol deployed on devnet (about 11,000 lines of Anchor), scanned at a commit where a write-back bug was still present. Names, addresses and contacts are anonymized; everything else is the engine's unedited output.</div>
+<h1>defi-protocol</h1>
+<div class="sub">Program: <code>protocol</code></div>
+
+<section class="verdict-box" style="background:#fff1e6;border:1px solid #c2410c33">
+  <div class="top"><span class="rating" style="color:#c2410c">Risk rating</span><span class="big" style="color:#c2410c">High</span></div>
+  <p>Watchdog read 62 account contexts (607 accounts) and 130 handlers across 34 source files of <code>protocol</code>, followed the 141 crates that actually compile into the program out of 263 in the lockfile, and checked the deployed program on devnet. It found 6 high issues to fix, and 4 points worth a second look. On devnet, a single key can replace the program's code at any time, with no delay. 2 dependency advisories reach the deployed program; 1 needs attention.</p>
+</section>
+
+<div class="cards">
+  <div class="card"><div class="n" style="color:#c2410c">6</div><div class="l">issues to fix</div></div>
+  <div class="card"><div class="n">4</div><div class="l">points to verify</div></div>
+  <div class="card"><div class="n">1<span class="muted" style="font-size:.9rem;font-weight:600"> / 2</span></div><div class="l">advisories reaching the program that need attention</div></div>
+  <div class="card"><div class="n">12</div><div class="l">vulnerability classes checked, 10 clean</div></div>
+</div>
+
+<h2>Issues to fix</h2>
+<article class="finding" id="W-01">
+      <header><span class="ref">W-01</span><span class="chip" style="color:#c2410c;background:#fff1e6">High</span><span class="conf">Confidence: medium</span></header>
+      <h3><code>sell_pool</code> and <code>hop_pool</code> can be the same account</h3>
+      <div class="loc">programs/protocol/src/instructions/router.rs:663 · <code>CrankRoute</code> · handler <code>crank_route</code></div>
+      <pre class="code"><span class="ln"><i>660</i>        seeds = [AMM_POOL_SEED, hop_pool.token_a_mint.as_ref(), hop_pool.token_b_mint.as_ref()],</span><span class="ln"><i>661</i>        bump = hop_pool.bump,</span><span class="ln"><i>662</i>    )]</span><span class="ln focus"><i>663</i>    pub hop_pool: Option&lt;Box&lt;Account&lt;'info, AmmPool&gt;&gt;&gt;,</span><span class="ln"><i>664</i> </span><span class="ln"><i>665</i>    #[account(mut)]</span><span class="ln"><i>666</i>    pub hop_usdc_vault: Option&lt;Box&lt;Account&lt;'info, TokenAccount&gt;&gt;&gt;,</span></pre>
+      <div class="kv"><b>Why it matters</b><p>Both are mutable <code>Account&lt;AmmPool&gt;</code>. Anchor accepts the same account twice and, at the end of the instruction, writes each deserialized copy back in field order: the stale copy of <code>hop_pool</code> overwrites what the handler wrote through <code>sell_pool</code>. A caller who passes one account in both slots can revert a balance or reserve update (seen in practice: a pool recording funds its vault no longer held).</p></div>
+      <div class="kv"><b>Fix</b><p>Add <code>constraint = sell_pool.key() != hop_pool.key()</code> to the struct, which covers every handler, or <code>require_keys_neq!</code> at the top of <code>crank_route</code>.</p></div>
+      
+    </article><article class="finding" id="W-02">
+      <header><span class="ref">W-02</span><span class="chip" style="color:#c2410c;background:#fff1e6">High</span><span class="conf">Confidence: medium</span></header>
+      <h3><code>sell_pool</code> and <code>target_pool</code> can be the same account</h3>
+      <div class="loc">programs/protocol/src/instructions/router.rs:677 · <code>CrankRoute</code> · handler <code>crank_route</code></div>
+      <pre class="code"><span class="ln"><i>674</i>        seeds = [AMM_POOL_SEED, target_pool.token_a_mint.as_ref(), target_pool.token_b_mint.as_ref()],</span><span class="ln"><i>675</i>        bump = target_pool.bump,</span><span class="ln"><i>676</i>    )]</span><span class="ln focus"><i>677</i>    pub target_pool: Box&lt;Account&lt;'info, AmmPool&gt;&gt;,</span><span class="ln"><i>678</i> </span><span class="ln"><i>679</i>    // …</span><span class="ln"><i>680</i>    // …</span></pre>
+      <div class="kv"><b>Why it matters</b><p>Both are mutable <code>Account&lt;AmmPool&gt;</code>. Anchor accepts the same account twice and, at the end of the instruction, writes each deserialized copy back in field order: the stale copy of <code>target_pool</code> overwrites what the handler wrote through <code>sell_pool</code>. A caller who passes one account in both slots can revert a balance or reserve update (seen in practice: a pool recording funds its vault no longer held).</p></div>
+      <div class="kv"><b>Fix</b><p>Add <code>constraint = sell_pool.key() != target_pool.key()</code> to the struct, which covers every handler, or <code>require_keys_neq!</code> at the top of <code>crank_route</code>.</p></div>
+      
+    </article><article class="finding" id="W-03">
+      <header><span class="ref">W-03</span><span class="chip" style="color:#c2410c;background:#fff1e6">High</span><span class="conf">Confidence: medium</span></header>
+      <h3><code>hop_pool</code> and <code>target_pool</code> can be the same account</h3>
+      <div class="loc">programs/protocol/src/instructions/router.rs:677 · <code>CrankRoute</code> · handler <code>crank_route</code></div>
+      <pre class="code"><span class="ln"><i>674</i>        seeds = [AMM_POOL_SEED, target_pool.token_a_mint.as_ref(), target_pool.token_b_mint.as_ref()],</span><span class="ln"><i>675</i>        bump = target_pool.bump,</span><span class="ln"><i>676</i>    )]</span><span class="ln focus"><i>677</i>    pub target_pool: Box&lt;Account&lt;'info, AmmPool&gt;&gt;,</span><span class="ln"><i>678</i> </span><span class="ln"><i>679</i>    // …</span><span class="ln"><i>680</i>    // …</span></pre>
+      <div class="kv"><b>Why it matters</b><p>Both are mutable <code>Account&lt;AmmPool&gt;</code>. Anchor accepts the same account twice and, at the end of the instruction, writes each deserialized copy back in field order: the stale copy of <code>target_pool</code> overwrites what the handler wrote through <code>hop_pool</code>. A caller who passes one account in both slots can revert a balance or reserve update (seen in practice: a pool recording funds its vault no longer held).</p></div>
+      <div class="kv"><b>Fix</b><p>Add <code>constraint = hop_pool.key() != target_pool.key()</code> to the struct, which covers every handler, or <code>require_keys_neq!</code> at the top of <code>crank_route</code>.</p></div>
+      
+    </article><article class="finding" id="W-04">
+      <header><span class="ref">W-04</span><span class="chip" style="color:#c2410c;background:#fff1e6">High</span><span class="conf">Confidence: medium</span></header>
+      <h3><code>sell_pool</code> and <code>hop_pool</code> can be the same account</h3>
+      <div class="loc">programs/protocol/src/instructions/strategy.rs:507 · <code>CrankStrategy</code> · handler <code>crank_strategy</code></div>
+      <pre class="code"><span class="ln"><i>504</i>        seeds = [AMM_POOL_SEED, hop_pool.token_a_mint.as_ref(), hop_pool.token_b_mint.as_ref()],</span><span class="ln"><i>505</i>        bump = hop_pool.bump,</span><span class="ln"><i>506</i>    )]</span><span class="ln focus"><i>507</i>    pub hop_pool: Option&lt;Box&lt;Account&lt;'info, AmmPool&gt;&gt;&gt;,</span><span class="ln"><i>508</i> </span><span class="ln"><i>509</i>    #[account(mut)]</span><span class="ln"><i>510</i>    pub hop_usdc_vault: Option&lt;Box&lt;Account&lt;'info, TokenAccount&gt;&gt;&gt;,</span></pre>
+      <div class="kv"><b>Why it matters</b><p>Both are mutable <code>Account&lt;AmmPool&gt;</code>. Anchor accepts the same account twice and, at the end of the instruction, writes each deserialized copy back in field order: the stale copy of <code>hop_pool</code> overwrites what the handler wrote through <code>sell_pool</code>. A caller who passes one account in both slots can revert a balance or reserve update (seen in practice: a pool recording funds its vault no longer held).</p></div>
+      <div class="kv"><b>Fix</b><p>Add <code>constraint = sell_pool.key() != hop_pool.key()</code> to the struct, which covers every handler, or <code>require_keys_neq!</code> at the top of <code>crank_strategy</code>.</p></div>
+      
+    </article><article class="finding" id="W-05">
+      <header><span class="ref">W-05</span><span class="chip" style="color:#c2410c;background:#fff1e6">High</span><span class="conf">Confidence: medium</span></header>
+      <h3><code>sell_pool</code> and <code>target_pool</code> can be the same account</h3>
+      <div class="loc">programs/protocol/src/instructions/strategy.rs:520 · <code>CrankStrategy</code> · handler <code>crank_strategy</code></div>
+      <pre class="code"><span class="ln"><i>517</i>        seeds = [AMM_POOL_SEED, target_pool.token_a_mint.as_ref(), target_pool.token_b_mint.as_ref()],</span><span class="ln"><i>518</i>        bump = target_pool.bump,</span><span class="ln"><i>519</i>    )]</span><span class="ln focus"><i>520</i>    pub target_pool: Box&lt;Account&lt;'info, AmmPool&gt;&gt;,</span><span class="ln"><i>521</i> </span><span class="ln"><i>522</i>    #[account(mut)]</span><span class="ln"><i>523</i>    pub target_deposit_vault: Box&lt;Account&lt;'info, TokenAccount&gt;&gt;,</span></pre>
+      <div class="kv"><b>Why it matters</b><p>Both are mutable <code>Account&lt;AmmPool&gt;</code>. Anchor accepts the same account twice and, at the end of the instruction, writes each deserialized copy back in field order: the stale copy of <code>target_pool</code> overwrites what the handler wrote through <code>sell_pool</code>. A caller who passes one account in both slots can revert a balance or reserve update (seen in practice: a pool recording funds its vault no longer held).</p></div>
+      <div class="kv"><b>Fix</b><p>Add <code>constraint = sell_pool.key() != target_pool.key()</code> to the struct, which covers every handler, or <code>require_keys_neq!</code> at the top of <code>crank_strategy</code>.</p></div>
+      
+    </article><article class="finding" id="W-06">
+      <header><span class="ref">W-06</span><span class="chip" style="color:#c2410c;background:#fff1e6">High</span><span class="conf">Confidence: medium</span></header>
+      <h3><code>hop_pool</code> and <code>target_pool</code> can be the same account</h3>
+      <div class="loc">programs/protocol/src/instructions/strategy.rs:520 · <code>CrankStrategy</code> · handler <code>crank_strategy</code></div>
+      <pre class="code"><span class="ln"><i>517</i>        seeds = [AMM_POOL_SEED, target_pool.token_a_mint.as_ref(), target_pool.token_b_mint.as_ref()],</span><span class="ln"><i>518</i>        bump = target_pool.bump,</span><span class="ln"><i>519</i>    )]</span><span class="ln focus"><i>520</i>    pub target_pool: Box&lt;Account&lt;'info, AmmPool&gt;&gt;,</span><span class="ln"><i>521</i> </span><span class="ln"><i>522</i>    #[account(mut)]</span><span class="ln"><i>523</i>    pub target_deposit_vault: Box&lt;Account&lt;'info, TokenAccount&gt;&gt;,</span></pre>
+      <div class="kv"><b>Why it matters</b><p>Both are mutable <code>Account&lt;AmmPool&gt;</code>. Anchor accepts the same account twice and, at the end of the instruction, writes each deserialized copy back in field order: the stale copy of <code>target_pool</code> overwrites what the handler wrote through <code>hop_pool</code>. A caller who passes one account in both slots can revert a balance or reserve update (seen in practice: a pool recording funds its vault no longer held).</p></div>
+      <div class="kv"><b>Fix</b><p>Add <code>constraint = hop_pool.key() != target_pool.key()</code> to the struct, which covers every handler, or <code>require_keys_neq!</code> at the top of <code>crank_strategy</code>.</p></div>
+      
+    </article>
+
+<h2>Worth a second look</h2>
+<p class="muted">Lower-confidence observations. Each may be handled by an invariant this analysis cannot follow; read the code before acting.</p>
+<details><summary>Same account passed twice (write-back) <span class="muted">(2)</span></summary>
+<div class="item"><b><code>source_pool</code> and <code>target_pool</code> can be the same account</b><div class="loc">programs/protocol/src/instructions/strategy.rs:520 · <code>CrankStrategy</code></div><p class="muted" style="margin:4px 0 0">Both are mutable <code>Account&lt;AmmPool&gt;</code>. Anchor accepts the same account twice and, at the end of the instruction, writes each deserialized copy back in field order: the stale copy of <code>target_pool</code> overwrites what the handler wrote through <code>source_pool</code>. A caller who passes one account in both slots can revert a balance or reserve update (seen in practice: a pool recording funds its vault no longer held).</p></div><div class="item"><b><code>source_lp_user_info</code> and <code>target_lp_user_info</code> can be the same account</b><div class="loc">programs/protocol/src/instructions/strategy.rs:540 · <code>CrankStrategy</code></div><p class="muted" style="margin:4px 0 0">Both are mutable <code>Account&lt;LpUserInfo&gt;</code>. Anchor accepts the same account twice and, at the end of the instruction, writes each deserialized copy back in field order: the stale copy of <code>target_lp_user_info</code> overwrites what the handler wrote through <code>source_lp_user_info</code>. A caller who passes one account in both slots can revert a balance or reserve update (seen in practice: a pool recording funds its vault no longer held).</p></div></details><details><summary>u128 result cast down with `as` <span class="muted">(2)</span></summary>
+<div class="item"><b>A u128 result is cast down with <code>as</code> and no bound</b><div class="loc">programs/protocol/src/amm_math.rs:34</div><p class="muted" style="margin:4px 0 0"><code>as</code> silently drops the high bits when the value does not fit, even with overflow-checks on. In AMM and reward math this turns an overflow into a tiny wrong number instead of an error (Cetus, May 2025: $223M).</p></div><div class="item"><b>A u128 result is cast down with <code>as</code> and no bound</b><div class="loc">programs/protocol/src/instructions/strategy.rs:217</div><p class="muted" style="margin:4px 0 0"><code>as</code> silently drops the high bits when the value does not fit, even with overflow-checks on. In AMM and reward math this turns an overflow into a tiny wrong number instead of an error (Cetus, May 2025: $223M).</p></div></details>
+
+<h2>Deployed program</h2>
+<div class="prog bad"><div class="prog-h"><code>[address redacted]</code><span class="tag">devnet</span></div>
+      <p class="auth">One private key can replace this program's code at any time, with no delay.</p>
+      <dl><dt>Upgrade authority</dt><dd><code>[address redacted]</code></dd>
+      
+      <dt>Last code change</dt><dd>2026-10-08</dd>
+      <dt>Verified build</dt><dd>none</dd>
+      <dt>security.txt</dt><dd>email:[redacted]</dd></dl>
+      <ul class="flags"><li><span class="chip" style="color:#a16207;background:#fef7dc">Medium</span> Code changed on 2026-10-08, less than 7 days ago.</li><li><span class="chip" style="color:#a16207;background:#fef7dc">Medium</span> No verified build: nothing ties the deployed binary to public source code.</li></ul></div>
+
+<h2>Dependencies</h2>
+<p class="muted">Only crates that compile into the program for the Solana target count as on-chain: 141 of the 263 crates in the lockfile. The rest (CLI, RPC client, test validator, proc-macros) never reach the deployed binary.</p>
+<h3 style="font-size:.95rem;margin:16px 0 4px">Reaching the deployed program (2)</h3><div class="adv">
+      <span class="chip" style="color:#a16207;background:#fef7dc">Medium</span>
+      <div><a href="https://rustsec.org/advisories/RUSTSEC-2023-0033.html">RUSTSEC-2023-0033</a> <span class="muted">borsh 0.10.4</span>
+      <div>Parsing borsh messages with ZST which are not-copy/clone is unsound</div>
+      <div class="verdict conditional"><b>Depends on your code:</b> Unsound only when deserializing a type that contains a zero-sized field that is not Copy. Program state and instruction data almost never do.</div></div></div><div class="adv">
+      <span class="chip" style="color:#4b5563;background:#eef0f4">Info</span>
+      <div><a href="https://rustsec.org/advisories/RUSTSEC-2026-0190.html">RUSTSEC-2026-0190</a> <span class="muted">anyhow 1.0.100</span>
+      <div>Unsoundness in `Error::downcast_mut()`</div>
+      </div></div>
+<details><summary>Tooling and off-chain crates (1) <span class="muted">not in the deployed binary; they run on your machines and in CI</span></summary><div class="item"><div class="adv">
+      <span class="chip" style="color:#2563eb;background:#e8f0fe">Low</span>
+      <div><a href="https://rustsec.org/advisories/RUSTSEC-2026-0097.html">RUSTSEC-2026-0097</a> <span class="muted">rand 0.7.3</span>
+      <div>Rand is unsound with a custom logger using rand::rng()</div>
+      </div></div></div></details>
+<details><summary>Unmaintained crates (2) <span class="muted">no known defect; no future patches</span></summary><div class="item"><div class="adv">
+      <span class="chip" style="color:#4b5563;background:#eef0f4">Info</span>
+      <div><a href="https://rustsec.org/advisories/RUSTSEC-2025-0141.html">RUSTSEC-2025-0141</a> <span class="muted">bincode 1.3.3</span>
+      <div>Bincode is unmaintained</div>
+      </div></div></div><div class="item"><div class="adv">
+      <span class="chip" style="color:#4b5563;background:#eef0f4">Info</span>
+      <div><a href="https://rustsec.org/advisories/RUSTSEC-2025-0161.html">RUSTSEC-2025-0161</a> <span class="muted">libsecp256k1 0.6.0</span>
+      <div>libsecp256k1 is unmaintained</div>
+      </div></div></div></details>
+
+<h2>What was checked</h2>
+<table><thead><tr><th>Vulnerability class</th><th>Scope</th><th>Result</th></tr></thead><tbody>
+<tr><td>Authority that never has to sign</td><td class="muted">every authority-like account</td><td class="res ok">✓ clean</td></tr><tr><td>Re-initialization takeover (init_if_needed)</td><td class="muted">46 init_if_needed state accounts</td><td class="res ok">✓ clean</td></tr><tr><td>Same account passed twice (write-back)</td><td class="muted">every pair of mutable program-owned accounts</td><td class="res hit">6 to fix</td></tr><tr><td>Unchecked CPI target</td><td class="muted">every program account taken raw</td><td class="res ok">✓ clean</td></tr><tr><td>Data read from an account of unknown owner</td><td class="muted">every UncheckedAccount / AccountInfo</td><td class="res ok">✓ clean</td></tr><tr><td>Forged sysvar</td><td class="muted">every sysvar taken raw</td><td class="res ok">✓ clean</td></tr><tr><td>remaining_accounts used without checks</td><td class="muted">every handler</td><td class="res ok">✓ clean</td></tr><tr><td>Writable account with no constraint and no CHECK note</td><td class="muted">every UncheckedAccount / AccountInfo</td><td class="res ok">✓ clean</td></tr><tr><td>Token-2022 transfer without _checked</td><td class="muted">every token CPI</td><td class="res ok">✓ clean</td></tr><tr><td>Account closed by draining lamports only</td><td class="muted">every manual close</td><td class="res ok">✓ clean</td></tr><tr><td>Bound checked on a truncated value</td><td class="muted">every check on a narrowing cast</td><td class="res ok">✓ clean</td></tr><tr><td>u128 result cast down with `as`</td><td class="muted">every narrowing cast</td><td class="res note">2 to verify</td></tr>
+<tr><td>overflow-checks in release profile</td><td class="muted">Cargo.toml</td><td class="res ok">✓ on</td></tr>
+<tr><td>Dependency advisories (RustSec / OSV)</td><td class="muted">263 pinned crates, exact versions</td><td class="res hit">2 reach the program</td></tr>
+<tr><td>Upgrade authority, verified build, security.txt</td><td class="muted">mainnet, then devnet</td><td class="res hit">1 program found</td></tr>
+</tbody></table>
+
+<div class="limits"><b>Method and limits.</b><ul>
+<li>Static analysis of the program source as Anchor reads it: account contexts, constraints, and the handlers and helpers that use them. A rule reports only when no guard is visible in the constraints or in the code the handler runs.</li>
+<li>Dependency reach follows the real dependency graph for the Solana target (target-specific dependencies, dev-dependencies and proc-macros excluded), from the lockfile and the crates.io index.</li>
+<li>Economic logic (rounding direction, price and reward math, oracle use) is not judged: those bugs live in what the numbers mean, not in the account wiring.</li>
+<li>It does not execute the program, prove its economics, or replace a manual audit. A clean section means none of the listed patterns was found, not that no bug exists.</li>
+</ul></div>
+
+
+</main>
+<div class="ft"><svg width="20" height="20" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Solana Watchdog"><defs><linearGradient id="wg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#9945FF"/><stop offset="1" stop-color="#14F195"/></linearGradient></defs><circle cx="32" cy="32" r="30" fill="url(#wg)"/><path d="M16 24 L21 7 L27 20 Z" fill="#efe7d6"/><path d="M48 24 L43 7 L37 20 Z" fill="#efe7d6"/><path d="M19.5 21 L21.6 12 L24.4 19 Z" fill="#b98cff"/><path d="M44.5 21 L42.4 12 L39.6 19 Z" fill="#b98cff"/><ellipse cx="32" cy="34" rx="15" ry="14" fill="#f4eddd"/><ellipse cx="32" cy="41" rx="8" ry="6.5" fill="#fffaf0"/><path d="M21.5 29 L28 30.5" stroke="#3a3550" stroke-width="1.6" stroke-linecap="round"/><path d="M42.5 29 L36 30.5" stroke="#3a3550" stroke-width="1.6" stroke-linecap="round"/><circle cx="26" cy="33" r="3" fill="#20202f"/><circle cx="38" cy="33" r="3" fill="#20202f"/><circle cx="27" cy="32.1" r=".9" fill="#fff"/><circle cx="39" cy="32.1" r=".9" fill="#fff"/><ellipse cx="32" cy="38.5" rx="2.7" ry="2" fill="#20202f"/><path d="M32 40.5 Q28 44 25 42" stroke="#20202f" stroke-width="1.4" fill="none" stroke-linecap="round"/><path d="M32 40.5 Q36 44 39 42" stroke="#20202f" stroke-width="1.4" fill="none" stroke-linecap="round"/><circle cx="45" cy="45" r="7.5" fill="rgba(255,255,255,.18)" stroke="#20202f" stroke-width="2.4"/><path d="M50.4 50.4 L57 57" stroke="#20202f" stroke-width="3.4" stroke-linecap="round"/></svg><div>Generated by <b>Solana Watchdog</b> · <a href="https://watchdog.protocol.finance">watchdog.protocol.finance</a></div></div>
+</div></body></html>

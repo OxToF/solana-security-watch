@@ -145,3 +145,51 @@ test("risk rating: a mainnet single key is high even with clean code", () => {
   assert.equal(buildModel({ ...base, deployed: [{ cluster: "mainnet", authority: { kind: "single-key", text: "t" } }] }).risk, "high");
   assert.equal(buildModel({ ...base, deployed: [{ cluster: "devnet", authority: { kind: "single-key", text: "t" } }] }).risk, "clean");
 });
+
+test("precision: no finding for a hard-coded CPI target, forwarded proofs, or a recorded admin", () => {
+  const CNFT = `
+#[derive(Accounts)]
+pub struct Burn<'info> {
+    pub owner: Signer<'info>,
+    /// CHECK: listed for the CPI
+    pub bubblegum_program: UncheckedAccount<'info>,
+}`;
+  // program_id hard-coded, proof nodes only passed along: real code from program-examples.
+  assert.equal(fixture(`${CNFT}
+pub fn burn(ctx: Context<Burn>) -> Result<()> {
+    let mut accounts = vec![];
+    for acc in ctx.remaining_accounts.iter() { accounts.push(AccountMeta::new_readonly(acc.key(), false)); }
+    let ix = Instruction { program_id: MPL_BUBBLEGUM_ID, accounts, data: vec![] };
+    invoke(&ix, &[ctx.accounts.bubblegum_program.to_account_info()])?;
+    Ok(())
+}`).findings.length, 0);
+  // The same account as the call's target is reported.
+  assert.deepEqual(rules(fixture(`${CNFT}
+pub fn burn(ctx: Context<Burn>) -> Result<()> {
+    let ix = Instruction { program_id: ctx.accounts.bubblegum_program.key(), accounts: vec![], data: vec![] };
+    invoke(&ix, &[])?;
+    Ok(())
+}`)), ["high:arbitrary-cpi"]);
+  // remaining_accounts whose bytes are read here, unchecked, are reported.
+  assert.deepEqual(rules(fixture(`${CNFT}
+pub fn burn(ctx: Context<Burn>) -> Result<()> {
+    let d = ctx.remaining_accounts[0].try_borrow_data()?;
+    Ok(())
+}`)), ["high:unchecked-remaining-accounts"]);
+  // An admin only recorded at creation authorizes nothing: not a missing signer.
+  assert.equal(fixture(`
+#[account] pub struct Amm { pub admin: Pubkey }
+#[derive(Accounts)]
+pub struct CreateAmm<'info> {
+    #[account(init, payer = payer, space = 40)] pub amm: Account<'info, Amm>,
+    /// CHECK: read only
+    pub admin: AccountInfo<'info>,
+    #[account(mut)] pub payer: Signer<'info>,
+}
+pub fn create(ctx: Context<CreateAmm>) -> Result<()> { ctx.accounts.amm.admin = ctx.accounts.admin.key(); Ok(()) }`).findings.length, 0);
+});
+
+test("a thread-safety advisory is not exploitable in a single-threaded program", () => {
+  const j = judgeAdvisories([{ id: "RUSTSEC-2020-0137", aliases: [], severity: "HIGH", summary: "Data races in lever", crates: ["lever 0.1.0"], url: "u" }], { crates: new Set(["lever 0.1.0"]) });
+  assert.equal(j.onchain[0].verdict, "not-exploitable");
+});

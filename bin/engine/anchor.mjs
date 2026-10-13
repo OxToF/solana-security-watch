@@ -361,7 +361,10 @@ export function analyzeAnchor(programDirs, repoDir) {
     for (const f of s.fields) {
       const loose = f.kind === "UncheckedAccount" || f.kind === "AccountInfo";
       // Arbitrary CPI target: a program taken as a raw account and never pinned.
-      if (loose && PROGRAM_NAME.test(f.name) && !validated(f, s) && !new RegExp(`${f.name}\\.key\\(\\)\\s*(==|!=)|${f.name}\\.key\\s*(==|!=)|check_id\\(\\s*[^)]*${f.name}`).test(hText)) {
+      // ...and only when the call goes to it: `program_id: X.key()` or `CpiContext::new(X..)`.
+      // A CPI to a hard-coded id (program_id: SOME_ID) merely lists the account.
+      const targetsIt = new RegExp(`program_id\\s*:\\s*[\\w.]*\\b${f.name}\\b|CpiContext::new(?:_with_signer)?\\s*\\(\\s*[\\w.]*\\b${f.name}\\b|Instruction::new_with_\\w+\\s*\\(\\s*[\\w.]*\\b${f.name}\\b`).test(runText);
+      if (loose && PROGRAM_NAME.test(f.name) && targetsIt && !validated(f, s) && !new RegExp(`${f.name}\\.key\\(\\)\\s*(==|!=)|${f.name}\\.key\\s*(==|!=)|check_id\\(\\s*[^)]*${f.name}`).test(runText)) {
         add({ rule: "arbitrary-cpi", severity: "high", confidence: "medium", struct: s.name, field: f.name, file: s.file, line: f.line,
           title: `\`${f.name}\` is a program account nobody checks`,
           why: `\`${s.name}.${f.name}\` is a raw ${f.kind}, with no \`address\` constraint and no key comparison in the handler. If the instruction makes a CPI to it, the caller chooses which program runs: a look-alike program can accept the call and do nothing, or return fake data, while this program believes the transfer or the check happened.`,
@@ -373,14 +376,19 @@ export function analyzeAnchor(programDirs, repoDir) {
       if (AUTH_NAME.test(f.name) && ["UncheckedAccount", "AccountInfo", "SystemAccount"].includes(f.kind) && !f.c.signer && !f.c.seeds
           && !new RegExp(`${f.name}\\.is_signer`).test(hText + s.text)) {
         const gated = s.fields.filter((o) => o.c.hasOne.includes(f.name) || o.c.constraints.some((x) => mentions(x, f.name))).map((o) => o.name);
-        add({ rule: "missing-signer", severity: gated.length ? "critical" : "high", confidence: gated.length ? "high" : "medium", struct: s.name, field: f.name, file: s.file, line: f.line,
+        // Compared to a stored key in the handler is gating too. Neither: the key is only
+        // recorded (a creator naming an admin), which authorizes nothing here.
+        const comparedInCode = new RegExp(`\\b${f.name}\\s*\\.\\s*key\\(\\)\\s*==|==\\s*[^;\\n]*\\b${f.name}\\s*\\.\\s*key\\(\\)|keys_eq!\\s*\\([^;]*\\b${f.name}\\b`).test(runText);
+        if (gated.length || comparedInCode) {
+        add({ rule: "missing-signer", severity: "critical", confidence: gated.length ? "high" : "medium", struct: s.name, field: f.name, file: s.file, line: f.line,
           title: `\`${f.name}\` is checked by key but never has to sign`,
           why: gated.length
             ? `\`${gated.join("`, `")}\` require${gated.length > 1 ? "" : "s"} \`${f.name}\` to match a stored key (has_one / constraint), but \`${f.name}\` is a ${f.kind}: anyone can pass the right public key without holding the private key. The authority check is decorative.`
-            : `An account named \`${f.name}\` is a ${f.kind} with no \`signer\` constraint and no \`is_signer\` check in the handler. If anything in this instruction relies on it being the authority, anyone can impersonate it.`,
+            : `The handler compares \`${f.name}\` to a stored key, but \`${f.name}\` is a ${f.kind} with no \`signer\` constraint and no \`is_signer\` check: anyone can pass the right public key without holding the private key.`,
           fix: `Type it \`Signer<'info>\`, or add the \`signer\` constraint.`,
           snippet: snippetOf(s.raw, f.line) });
-        continue;
+          continue;
+        }
       }
       // Sysvar taken as a raw account: a forged "clock" or "instructions" account.
       if (loose && SYSVAR_NAME.test(f.name) && !f.c.address && !new RegExp(`${f.name}[^;]*(sysvar::|::ID|::id\\(\\))`).test(hText)) {
@@ -427,7 +435,9 @@ export function analyzeAnchor(programDirs, repoDir) {
         const [a, b] = [fs[x], fs[y]];
         const unguarded = perHandler.filter((x) => !distinctnessProved(a, b, s, x.text));
         if (!unguarded.length) continue;
-        const where = unguarded.filter((x) => x.h).map((x) => `\`${x.h.fn}\``);
+        // lib.rs wrappers take the same Context as the handler they call: one name each.
+        const where = [...new Set(unguarded.filter((x) => x.h).map((x) => `\`${x.h.fn}\``))];
+        const guardedBy = [...new Set(perHandler.filter((x) => x.h && !unguarded.includes(x)).map((x) => `\`${x.h.fn}\``))].filter((n) => !where.includes(n));
         const programOwned = a.kind !== "InterfaceAccount" && localTypes.has(a.inner);
         // The write-back hazard is specific to accounts this program owns and serializes.
         // Two token accounts passed twice make a self-transfer, which is rarely exploitable
@@ -442,7 +452,7 @@ export function analyzeAnchor(programDirs, repoDir) {
           why: programOwned
             ? `Both are mutable \`${k}\`. Anchor accepts the same account twice and, at the end of the instruction, writes each deserialized copy back in field order: the stale copy of \`${b.name}\` overwrites what the handler wrote through \`${a.name}\`. A caller who passes one account in both slots can revert a balance or reserve update (seen in practice: a pool recording funds its vault no longer held).`
             : `Both are mutable \`${k}\` and nothing proves they differ. Passed twice, a transfer "from A to B" becomes a self-transfer, and any accounting based on both balances counts the same funds twice.`,
-          fix: `Add \`constraint = ${a.name}.key() != ${b.name}.key()\` to the struct, which covers every handler${where.length && where.length < perHandler.length ? ` (today only ${perHandler.filter((x) => x.h && !unguarded.includes(x)).map((x) => `\`${x.h.fn}\``).join(", ")} check${perHandler.length - where.length > 1 ? "" : "s"} it)` : ""}, or \`require_keys_neq!\` at the top of ${where.length ? where.join(", ") : "the handler"}.`,
+          fix: `Add \`constraint = ${a.name}.key() != ${b.name}.key()\` to the struct, which covers every handler${guardedBy.length ? ` (today only ${guardedBy.join(", ")} check${guardedBy.length > 1 ? "" : "s"} it)` : ""}, or \`require_keys_neq!\` at the top of ${where.length ? where.join(", ") : "the handler"}.`,
           handlers: where.map((w) => w.replace(/`/g, "")),
           snippet: snippetOf(s.raw, b.line) });
       }
@@ -477,6 +487,12 @@ export function analyzeAnchor(programDirs, repoDir) {
     for (const h of hs) {
       if (!/remaining_accounts/.test(h.body)) continue;
       if (/\.owner\b|(Account|AccountLoader|InterfaceAccount)(::<[^>]*>)?::try_from|\.key\(\)\s*(==|!=)|key\s*==|find_program_address|create_program_address/.test(h.body)) continue;
+      // Only passed through to a CPI (proof nodes to a Merkle tree program, extra accounts to
+      // a router), never read here: the program receiving them is the one that checks them.
+      const forwarded = /\binvoke(_signed)?\s*\(|with_remaining_accounts\s*\(|CpiContext::new/.test(h.body);
+      const readsThem = /remaining_accounts[^;]*?(try_borrow_data|data\s*\.\s*borrow|try_from_slice|try_deserialize|from_le_bytes|lamports\s*\(\s*\)\s*\.\s*borrow_mut|try_borrow_mut_lamports)/.test(h.body)
+        || /for\s+(\w+)\s+in\s+[^{]*remaining_accounts[\s\S]*?\{[\s\S]*?\b\1\s*\.\s*(try_borrow_data|data\s*\.\s*borrow|try_borrow_mut_lamports)/.test(h.body);
+      if (forwarded && !readsThem) continue;
       const line = h.line + h.body.slice(0, h.body.indexOf("remaining_accounts")).split("\n").length - 1;
       const f = files.find((x) => x.rel === h.file);
       add({ rule: "unchecked-remaining-accounts", severity: "high", confidence: "medium", struct: s.name, field: "remaining_accounts", file: h.file, line,
