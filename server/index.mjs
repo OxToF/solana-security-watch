@@ -54,6 +54,11 @@ const DEMO_PROGRAMS = new Set([
   "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD", "MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD",
 ]);
 const DEVICE_RE = /^[A-Za-z0-9_-]{16,64}$/;
+// Repo previews: the first one per device is free, then the full report is the way to
+// scan another (no paid preview). Example repos stay free; re-opening a repo this device
+// already previewed is free; a preview that fails gives the free one back.
+const FREE_REPO_PREVIEWS = Number(process.env.FREE_REPO_PREVIEWS || 1);
+const DEMO_REPOS = new Set(["https://github.com/OxToF/solana-security-watch.git", "https://github.com/solana-developers/program-examples.git"]);
 // Agents buy per request, at volume: both prices sit under the $1 per-payment cap
 // x402 clients ship with, so an agent on default settings can pay without a human.
 // A PayAI settlement costs about $0.0015 on Solana, so a cent still clears it.
@@ -109,6 +114,8 @@ const watches = new Store(process.env.WATCHES_FILE || join(dirname(JOBS_FILE), "
 // Free program checks used, per device ("ip:<addr>" when the page sent no device id).
 const USAGE_FILE = process.env.PROGRAM_USAGE_FILE || join(dirname(JOBS_FILE), "program-usage.json");
 const programUsage = (() => { try { return JSON.parse(readFileSync(USAGE_FILE, "utf8")); } catch { return {}; } })();
+// Repos previewed per device: { device: [repo, ...] }, in the same file under "repos:".
+const repoUsage = (device) => (programUsage[`repos:${device}`] = programUsage[`repos:${device}`] || []);
 const saveUsage = () => { try { writeFileSync(USAGE_FILE, JSON.stringify(programUsage)); } catch (e) { console.error("[usage] not saved:", e.message); } };
 const traffic = new Traffic(process.env.TRAFFIC_FILE || join(dirname(JOBS_FILE), "traffic.jsonl"));
 const queue = new Queue();
@@ -229,10 +236,14 @@ async function runFreeJob(jobId) {
   try {
     const out = mkdtempSync(join(tmpdir(), "ssw-free-"));
     const result = await runScan(job.local && ALLOW_LOCAL ? { localPath: job.local, out } : { repoUrl: job.repo, out });
+    // Nothing to review (not a Solana program): an error that gives the free preview back.
+    if (!result.model.programs.length && !result.model.lockSize) throw new Error("No Rust / Anchor program found in this repository.");
     store.update(jobId, { status: "done", preview: previewOf(summarize(result)) });
   } catch (e) {
     store.update(jobId, { status: "error", error: String(e.message).slice(0, 300) });
     console.error(`[free ${jobId}] failed:`, e.message);
+    // A preview that could not be made does not use the free one.
+    if (job.device) { const seen = repoUsage(job.device); const k = seen.indexOf(job.repo); if (k >= 0) { seen.splice(k, 1); saveUsage(); } }
   }
 }
 
@@ -1196,11 +1207,20 @@ const server = createServer(async (req, res) => {
         try { repo = parseGithubUrl(body.repo || "").url; }
         catch (e) { return send(res, 400, { error: e.message }); }
       }
+      const device = DEVICE_RE.test(body.device || "") ? body.device : `ip:${ip}`;
+      const seen = repoUsage(device);
+      const counts = !DEMO_REPOS.has(repo) && !seen.includes(repo);
+      if (counts && (seen.length >= FREE_REPO_PREVIEWS || rateLimited(`free-scan-day:${ip}`, 20, 86_400_000)))
+        return send(res, 402, { error: "payment_required", priceSol: PRICE_SOL, priceUsd: PRICE_USD, message: `Your free preview is used. Get the full report for this repository directly: ${PRICE_SOL} SOL or ${PRICE_USD} USDC.` });
+      // Counted only once the preview is actually served or started.
+      const consume = () => { if (counts) { seen.push(repo); saveUsage(); } };
       const reuse = reusableFreeJob(store.list(), repo);
+      if (reuse) consume();
       if (reuse) return send(res, 200, { jobId: reuse.id, status: reuse.status, statusUrl: `${PUBLIC_BASE}/free/scan/${reuse.id}` });
       if (rateLimited(`free-scan:${ip}`, FREE_SCANS_PER_HOUR, 3600_000)) return send(res, 429, { error: `Free previews are limited to ${FREE_SCANS_PER_HOUR} an hour. Try again later.` });
       if (queue.tasks.length >= FREE_QUEUE_MAX) return send(res, 503, { error: "The scanner is busy. Try again in a few minutes." });
-      const job = store.create({ repo, local: isLocal ? body.local : undefined, free: true, priceUsd: 0, status: "queued" });
+      consume();
+      const job = store.create({ repo, local: isLocal ? body.local : undefined, free: true, priceUsd: 0, status: "queued", device });
       queue.enqueue(() => runFreeJob(job.id));
       return send(res, 202, { jobId: job.id, status: job.status, statusUrl: `${PUBLIC_BASE}/free/scan/${job.id}` });
     }
@@ -1211,7 +1231,7 @@ const server = createServer(async (req, res) => {
       if (!job || !job.free) return send(res, 404, { error: "unknown scan" });
       // A preview cached before the current engine is not served: the page could not read it.
       const stale = job.preview && job.preview.v !== PREVIEW_VERSION;
-      return send(res, 200, { jobId: job.id, repo: job.repo, status: stale ? "expired" : job.status, ...(job.preview && !stale ? { preview: job.preview } : {}), ...(job.status === "error" ? { error: "The scan failed: is the repo public and a Rust / Anchor project?" } : {}), unlockPriceUsd: PRICE_USD, unlockPriceSol: PRICE_SOL });
+      return send(res, 200, { jobId: job.id, repo: job.repo, status: stale ? "expired" : job.status, ...(job.preview && !stale ? { preview: job.preview } : {}), ...(job.status === "error" ? { error: /No Rust/.test(job.error || "") ? "No Rust / Anchor program found in this repository. Your free preview is still available." : "The scan failed: is the repo public and a Rust / Anchor project? Your free preview is still available." } : {}), unlockPriceUsd: PRICE_USD, unlockPriceSol: PRICE_SOL });
     }
 
     if (req.method === "POST" && url.pathname === "/scan") {

@@ -212,9 +212,9 @@ export default function App() {
             <p>Upgrade authority, multisig rules, last code change, verified build, security contact. Any program on mainnet. The examples are always free.</p>
           </div>
           <div className="moment">
-            <div className="when">Free</div>
+            <div className="when">First one free</div>
             <h3>Repo preview</h3>
-            <p>The full scan runs: risk rating, counts, coverage, the deployed program and the first issue in full.</p>
+            <p>The full scan runs: risk rating, counts, coverage, the deployed program and the first issue in full. The example repositories are always free.</p>
           </div>
           <div className="moment">
             <div className="when">1 SOL or 99 USDC</div>
