@@ -11,6 +11,14 @@
     {
       "source": "/terms",
       "destination": "/terms.html"
+    },
+    {
+      "source": "/app",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/app/:path*",
+      "destination": "/index.html"
     }
   ]
 }
