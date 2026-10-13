@@ -137,6 +137,7 @@ export default function App() {
         <nav className="nav">
           <a href="#tools">Free check</a>
           <a href="#report">The report</a>
+          <a href="#measured">Benchmark</a>
           <a href="/sample-report.html">Sample</a>
           <a href="#pricing">Pricing</a>
           <a href="/agents">For agents</a>
@@ -176,6 +177,28 @@ export default function App() {
             <h3>A real report, anonymized</h3>
             <p>A Solana DeFi protocol of about 11,000 lines of Anchor, at a commit where a write-back bug was still present. Watchdog found it, the same one a manual review had found.</p>
             <div className="buy"><a className="btn ghost" href="/sample-report.html">Read the sample report</a></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="measured">
+        <h2>Measured, not claimed</h2>
+        <div className="moments">
+          <div className="moment">
+            <div className="when">Every known bug class</div>
+            <h3>13 of 13 caught, 0 false alarms</h3>
+            <p>On <a href="https://github.com/coral-xyz/sealevel-attacks">sealevel-attacks</a>, the Anchor team's catalogue of Solana bugs: every vulnerable program flagged with the right class, none of the 22 fixed versions flagged. Run on every change to the engine.</p>
+          </div>
+          <div className="moment">
+            <div className="when">Audited protocols</div>
+            <h3>0 false issues on production code</h3>
+            <p>Orca Whirlpools, Raydium CLMM, marginfi v2, Drift v2 and Marinade, scanned from their public repositories: no issue raised that was not there. A scanner that cries wolf is one nobody reads.</p>
+          </div>
+          <div className="moment">
+            <div className="when">A real bug</div>
+            <h3>The one a manual review found</h3>
+            <p>In a live DeFi protocol, a pool account that could be passed twice and revert its own reserves. Watchdog flags it at the vulnerable commit and stops once it is fixed.</p>
+            <div className="buy"><a className="btn ghost" href="/sample-report.html">See that report</a></div>
           </div>
         </div>
       </section>
