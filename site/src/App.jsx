@@ -207,9 +207,9 @@ export default function App() {
         <h2>Pricing</h2>
         <div className="moments">
           <div className="moment">
-            <div className="when">Free</div>
+            <div className="when">First one free, then 0.1 SOL</div>
             <h3>Program check</h3>
-            <p>Upgrade authority, multisig rules, last code change, verified build, security contact. Any program on mainnet.</p>
+            <p>Upgrade authority, multisig rules, last code change, verified build, security contact. Any program on mainnet. The examples are always free.</p>
           </div>
           <div className="moment">
             <div className="when">Free</div>
