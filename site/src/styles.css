@@ -122,3 +122,15 @@ td:last-child{color:var(--muted)}
 .unlock{border-top:1px solid var(--line);margin-top:8px;padding-top:4px;display:flex;flex-direction:column;gap:10px}
 .unlock h4{margin-top:8px}
 @media (max-width:520px){.row{flex-direction:column}.counts b{font-size:1.15rem}.counts div{padding:8px}.tabs button{font-size:.88rem}}
+/* engine v2 preview: a finding as the report shows it */
+.finding{background:var(--card);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.fhead{display:flex;gap:8px;align-items:center}
+.ftitle{font-weight:700;line-height:1.35}
+.floc{font-size:.8rem;color:var(--accent2);word-break:break-all}
+.fcode{margin:0;background:#0b0b1a;border-radius:8px;padding:8px 0;overflow-x:auto;font-size:.74rem;line-height:1.5}
+.fcode span{display:block;padding:0 10px;white-space:pre}
+.fcode span.focus{background:rgba(139,92,246,.28);box-shadow:inset 3px 0 0 var(--accent)}
+.finding p{margin:0}
+.lockrow{display:flex;gap:8px;align-items:center;filter:none}
+.lockrow .blurtxt{filter:blur(5px);user-select:none}
+.vline code,.finding code:not(.floc){font-size:.85em;background:#0b0b1a;border-radius:4px;padding:0 .3em}

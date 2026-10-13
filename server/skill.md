@@ -100,13 +100,24 @@ tell you whether your program reaches the vulnerable code.
 
 ## Full scan (`/agent/scan`): what you get
 
-- Every RustSec / GHSA advisory that affects the **exact versions pinned** in the
-  repo's `Cargo.lock`, split into three buckets: the on-chain surface (crates the
-  deployed program links against), toolchain / off-chain crates, and unmaintained
-  crates. The on-chain bucket is the one that matters; most of a Solana lockfile
-  is CLI tooling that never reaches the BPF binary.
-- Build hygiene: `overflow-checks` in the release profile, Anchor version.
-- Code leads for known Solana bug classes, with `file:line`.
+- A **risk rating** (`critical`, `high`, `medium`, `low`, `clean`) and a one-paragraph
+  summary.
+- **Findings** from an Anchor-aware reading of the program: every
+  `#[derive(Accounts)]` context, its constraints, and the handlers and helpers that
+  use it. Missing signer, re-initialization takeover, the same account passed twice,
+  unchecked CPI target, data read from an account of unknown owner, forged sysvar,
+  unchecked `remaining_accounts`, bounds checked on a truncated value, and more.
+  Each has a severity, a confidence, `file:line`, the code, why it is exploitable
+  and the fix. `findings` are the ones to fix; `review` holds lower-confidence
+  notes. `coverage` lists every class checked, so a clean result reads as checked.
+- **Dependencies**: every RustSec / GHSA advisory at the **exact versions pinned** in
+  `Cargo.lock`, with `onchain: true` only when the crate compiles into the program
+  for the Solana target (followed through the real dependency graph, proc-macros and
+  target-specific dependencies excluded), and a `verdict` (`not-exploitable`,
+  `conditional`, `exploitable`) for known advisories.
+- **Deployed program**: from the `declare_id!`, the upgrade authority (single key,
+  multisig threshold and time lock, immutable), last deploy, verified build and
+  security.txt, on mainnet or devnet.
 - As JSON (for you), Markdown and a branded HTML report (for your human).
 
 It is a dependency and known-class scan, **not an audit**. A clean result does not
