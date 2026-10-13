@@ -134,3 +134,7 @@ td:last-child{color:var(--muted)}
 .lockrow{display:flex;gap:8px;align-items:center;filter:none}
 .lockrow .blurtxt{filter:blur(5px);user-select:none}
 .vline code,.finding code:not(.floc){font-size:.85em;background:#0b0b1a;border-radius:4px;padding:0 .3em}
+/* after a program check: where to go next */
+.next{border-top:1px solid var(--line);margin-top:6px;padding-top:4px;display:flex;flex-direction:column;gap:10px}
+.next h4{margin:8px 0 0}
+.next p{margin:0}
