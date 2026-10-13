@@ -12,6 +12,10 @@ import {
 import "@solana/wallet-adapter-react-ui/styles.css";
 import "./styles.css";
 import App from "./App.jsx";
+import Dashboard from "./Dashboard.jsx";
+
+// /app is the dashboard (projects, scans, reports); everything else is the landing.
+const IS_DASHBOARD = /^\/app(\/|$)/.test(window.location.pathname);
 
 // Browser-usable RPC. The public mainnet-beta endpoint rejects browser requests
 // (403), so this MUST be a real RPC (Helius/QuickNode) set as VITE_SOLANA_RPC.
@@ -38,7 +42,7 @@ function Root() {
     <ConnectionProvider endpoint={RPC}>
       <WalletProvider wallets={wallets} autoConnect={false}>
         <WalletModalProvider>
-          <App />
+          {IS_DASHBOARD ? <Dashboard /> : <App />}
         </WalletModalProvider>
       </WalletProvider>
     </ConnectionProvider>

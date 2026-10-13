@@ -133,6 +133,7 @@ export default function App() {
           <a href="#mcp">MCP</a>
           <a href="#endpoints">Endpoints</a>
           <a href="#browser">Scan in browser</a>
+          <a href="/app">Dashboard</a>
           <a href="https://github.com/OxToF/watchdog-mcp">GitHub</a>
         </nav>
       </header>
