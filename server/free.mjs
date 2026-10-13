@@ -7,9 +7,10 @@
 // FIRST issue in full. The other issues travel as their severity alone, so the blur
 // in the page hides nothing a curious visitor could read from the network tab.
 
-// Bumped whenever the preview's shape changes: an older cached preview is rescanned
-// rather than served to a page that cannot read it.
-export const PREVIEW_VERSION = 2;
+// Bumped whenever the preview's shape OR the engine's findings change: an older cached
+// preview is rescanned rather than served, so a fixed false positive never comes back
+// from the cache. 3: engine precision pass (arbitrary-cpi, remaining_accounts, signer).
+export const PREVIEW_VERSION = 3;
 
 // `summary` is the object summarize() builds from a scan result.
 export function previewOf(summary) {

@@ -12,8 +12,8 @@ const API_BASE = import.meta.env.VITE_API_BASE || "https://solana-security-watch
 const WALLET = import.meta.env.VITE_MERCHANT_WALLET || "7yMnWMrxzZ3YCtWXRsZEhAFwexHoJzBJy8RgN7Lhvy1P";
 // The server's price wins once a preview has loaded; this is only the first paint.
 // VITE_AMOUNT_USDC is not read: it may still hold the old 69 paywall price.
-const DEFAULT_PRICE = 9;
-const DEFAULT_PRICE_SOL = 0.1;
+const DEFAULT_PRICE = 99;
+const DEFAULT_PRICE_SOL = 1;
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const MEMO_PROGRAM = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
 
@@ -210,7 +210,7 @@ function RepoScan() {
   const p = state?.preview?.risk ? state.preview : null;
   return (
     <div className="tool">
-      <p className="tool-lead">Reads the program as Anchor does: every account, constraint and handler, the dependencies that really compile into it, and the deployed program on-chain. <b>The preview is free</b>; the full report unlocks for {priceSol} SOL.</p>
+      <p className="tool-lead">Reads the program as Anchor does: every account, constraint and handler, the dependencies that really compile into it, and the deployed program on-chain. <b>The preview is free</b>; the full report unlocks for {priceSol} SOL. <a href="/sample-report.html" target="_blank" rel="noreferrer">See a real report</a>.</p>
       <div className="row">
         <input className="fld" type="url" placeholder="https://github.com/org/repo" value={repo} onChange={(e) => setRepo(e.target.value)} spellCheck={false} autoCapitalize="off" />
         <button className="btn" onClick={() => scan()} disabled={busy}>{busy && !p ? "Scanning…" : "Free scan"}</button>
@@ -261,7 +261,7 @@ function RepoScan() {
           {(p.hidden.findings.length > 0 || p.hidden.advisories > 0 || p.hidden.review > 0) && (
             <div className="unlock">
               <h4>Unlock the full report: {priceSol} SOL</h4>
-              <p className="hint">Every issue with its code, why it is exploitable and how to fix it, the deployed program, and every dependency judged for on-chain reach. By email, as a page you can share with your team.</p>
+              <p className="hint">Every issue with its code, why it is exploitable and how to fix it, the deployed program, and every dependency judged for on-chain reach. By email, as a page you can share with your team. <a href="/sample-report.html" target="_blank" rel="noreferrer">This is what you get</a>.</p>
               <div className="connect-row"><WalletMultiButton /></div>
               <input className="fld" type="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
               <button className="btn pay" onClick={() => unlock("SOL")} disabled={busy}>{busy ? "Working…" : `Pay ${priceSol} SOL`}</button>
