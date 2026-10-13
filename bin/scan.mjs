@@ -16,6 +16,7 @@ import { onchainClosure, parseManifest } from "./engine/reach.mjs";
 import { analyzeAnchor } from "./engine/anchor.mjs";
 import { judgeAdvisories } from "./engine/advisories.mjs";
 import { inspectDeployed } from "./engine/deployed.mjs";
+import { triageFindings } from "./engine/triage.mjs";
 import { buildModel, renderHtml, renderMarkdown } from "./engine/report.mjs";
 
 const OSV_QUERY = process.env.OSV_QUERY_URL || "https://api.osv.dev/v1/query";
@@ -213,6 +214,7 @@ export async function runScan(opts = {}) {
     now = new Date(),
     log = console.log,
     cta = null,
+    review = false, // AI review of each finding: paid reports only (it costs per call)
   } = opts;
 
   let dir, owner, repo, cleanup = null;
@@ -247,6 +249,10 @@ export async function runScan(opts = {}) {
   });
   const analysis = analyzeAnchor(programs.map((p) => p.dir), dir);
   log(`[scan] ${analysis.stats.structs} account contexts, ${analysis.stats.fields} accounts, ${analysis.stats.handlers} handlers -> ${analysis.findings.length} observations`);
+  if (review && analysis.findings.length) {
+    const programFiles = programs.flatMap((p) => findFiles(join(p.dir, "src"), (n) => n.endsWith(".rs")).map((f) => relative(dir, f)));
+    analysis.triage = await triageFindings(analysis.findings, { repoDir: dir, programFiles, fetchImpl, log });
+  }
   const programSource = programs.flatMap((p) => findFiles(join(p.dir, "src"), (n) => n.endsWith(".rs")).map((f) => readFileSync(f, "utf8"))).join("\n");
   const judged = judgeAdvisories(deps.advisories, closure, programSource);
   const deployed = await inspectDeployed(analysis.declaredIds, { fetchImpl, log });
