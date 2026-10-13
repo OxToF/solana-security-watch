@@ -61,6 +61,8 @@ let rpc, fac, osv, srv, base, testDir, currentMemo = null, x402Memo = null, osvD
 const osvCalls = [];
 // Web-flow payments the fake RPC knows, by signature.
 const webTxs = new Map();
+// An immutable program the fake RPC knows (BPF loader v2: no authority to read).
+const TEST_PROGRAM = "Stake11111111111111111111111111111111111111";
 // What the fake RPC lists for the merchant address (getSignaturesForAddress).
 const chainSigs = [];
 // What the fake facilitator was asked to settle against, per call.
@@ -73,6 +75,10 @@ before(async () => {
     req.on("data", (c) => (b += c));
     req.on("end", () => {
       const { method, params } = JSON.parse(b);
+      if (method === "getAccountInfo" && params[0] === TEST_PROGRAM) {
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { value: { executable: true, owner: "BPFLoader2111111111111111111111111111111111", lamports: 1, data: ["", "base64"] } } }));
+      }
       if (method === "getSignaturesForAddress") {
         res.writeHead(200, { "content-type": "application/json" });
         return res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result: params[0] === MERCHANT ? chainSigs : [] }));
@@ -152,6 +158,7 @@ before(async () => {
       SOLANA_DEVNET_RPC_URL: `http://127.0.0.1:${rpc.address().port}`,
       CRATES_INDEX_URL: "http://127.0.0.1:1",
       PAY_WATCH_MS: "100",
+      OSEC_VERIFY_URL: "http://127.0.0.1:1",
       ALLOW_ORIGIN: "https://site.example, https://alias.example/",
       ALLOW_LOCAL: "1",
       FREE_SCANS_PER_HOUR: "2",
@@ -738,4 +745,32 @@ test("a payment the page never reported is found on-chain by its memo", async ()
   assert.equal(await status(other.jobId), "pending_payment");
   // The page reporting it afterwards is refused, not credited twice.
   assert.equal((await fetch(`${base}/pay/verify`, { method: "POST", headers: h, body: JSON.stringify({ jobId: order.jobId, signature: "G".repeat(88) }) })).status, 409);
+});
+
+test("program check: one free per device, examples always free, then 0.1 SOL delivers the answer", async () => {
+  const h = { "content-type": "application/json", "fly-client-ip": "10.7.7.7" };
+  const check = (programId, device) => fetch(`${base}/free/program`, { method: "POST", headers: h, body: JSON.stringify({ programId, device }) });
+  const A = "deviceAAAAAAAAAAAAAAAA", B = "deviceBBBBBBBBBBBBBBBB", C = "deviceCCCCCCCCCCCCCCCC";
+  assert.equal((await check(TEST_PROGRAM, A)).status, 200);
+  const again = await check(TEST_PROGRAM, A);
+  assert.equal(again.status, 402);
+  assert.equal((await again.json()).priceSol, 0.1);
+  // An example stays free (the fake chain does not know Jupiter: an honest 404, not a 402).
+  assert.equal((await check("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4", A)).status, 404);
+  assert.equal((await check(TEST_PROGRAM, B)).status, 200);
+  // A wrong address does not use the free check.
+  assert.equal((await check(MERCHANT, C)).status, 404);
+  assert.equal((await check(TEST_PROGRAM, C)).status, 200);
+
+  const order = await (await fetch(`${base}/program/order`, { method: "POST", headers: h, body: JSON.stringify({ programId: TEST_PROGRAM }) })).json();
+  assert.equal(order.amount, 0.1);
+  assert.equal(order.currency, "SOL");
+  assert.equal(order.memo, order.jobId);
+  webTxs.set("H".repeat(88), fakeSolTx({ lamports: 100_000_000, memo: order.jobId }));
+  assert.equal((await fetch(`${base}/pay/verify`, { method: "POST", headers: h, body: JSON.stringify({ jobId: order.jobId, signature: "H".repeat(88) }) })).status, 202);
+  let s;
+  for (let i = 0; i < 50; i++) { s = await (await fetch(order.statusUrl)).json(); if (s.status === "done" || s.status === "error") break; await new Promise((r) => setTimeout(r, 100)); }
+  assert.equal(s.status, "done", JSON.stringify(s));
+  assert.equal(s.result.programId, TEST_PROGRAM);
+  assert.equal(s.result.upgradeable, false);
 });

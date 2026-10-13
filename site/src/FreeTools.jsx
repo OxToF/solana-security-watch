@@ -14,6 +14,7 @@ const WALLET = import.meta.env.VITE_MERCHANT_WALLET || "7yMnWMrxzZ3YCtWXRsZEhAFw
 // VITE_AMOUNT_USDC is not read: it may still hold the old 69 paywall price.
 const DEFAULT_PRICE = 99;
 const DEFAULT_PRICE_SOL = 1;
+const PROGRAM_PRICE_SOL = 0.1; // shown before the server says; the server's 402 carries the real price
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const MEMO_PROGRAM = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
 
@@ -44,29 +45,77 @@ function verdictOf(r) {
   return { tone: "ok", title: "Upgrades need several approvals", line: r.authority?.text };
 }
 
+// One random id per browser, to count the free program check. Storage can be blocked
+// (private mode, webviews): then the server falls back to counting by address.
+function deviceId() {
+  try {
+    let d = localStorage.getItem("watchdog-device");
+    if (!d) { d = Array.from(crypto.getRandomValues(new Uint8Array(18)), (b) => b.toString(16).padStart(2, "0")).join(""); localStorage.setItem("watchdog-device", d); }
+    return d;
+  } catch { return undefined; }
+}
+
 function ProgramCheck() {
+  const { connection } = useConnection();
+  const { publicKey, sendTransaction, connected } = useWallet();
   const [pid, setPid] = useState("");
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState(null);
   const [err, setErr] = useState(null);
+  const [paywall, setPaywall] = useState(null); // { priceSol, programId }
+  const [payMsg, setPayMsg] = useState(null);
 
   async function check(id = pid.trim()) {
-    setErr(null); setRes(null);
+    setErr(null); setRes(null); setPaywall(null); setPayMsg(null);
     if (!isAddress(id)) return setErr("Paste a Solana program address.");
     setPid(id); setBusy(true);
     try {
-      const r = await fetch(`${API_BASE}/free/program`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ programId: id }) });
+      const r = await fetch(`${API_BASE}/free/program`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ programId: id, device: deviceId() }) });
       const j = await r.json().catch(() => ({}));
+      if (r.status === 402) return setPaywall({ priceSol: j.priceSol, programId: id, message: j.message });
       if (!r.ok) throw new Error(j.error || "The check failed. Try again.");
       setRes(j);
     } catch (e) { setErr(e.message); }
     finally { setBusy(false); }
   }
 
+  async function payAndCheck() {
+    setPayMsg(null);
+    if (!connected || !publicKey) return setPayMsg({ kind: "err", text: "Connect your wallet first." });
+    setBusy(true);
+    let ordered = false;
+    try {
+      setPayMsg({ kind: "", text: "Creating your order…" });
+      const r = await fetch(`${API_BASE}/program/order`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ programId: paywall.programId }) });
+      if (!r.ok) throw new Error("Could not create the order. Try again.");
+      const order = await r.json();
+      ordered = true;
+      // The order id rides in a memo: the server credits only a payment that names it.
+      const tx = new Transaction().add(
+        SystemProgram.transfer({ fromPubkey: publicKey, toPubkey: new PublicKey(order.payTo || WALLET), lamports: Math.round(order.amount * 1e9) }),
+        new TransactionInstruction({ keys: [], programId: new PublicKey(MEMO_PROGRAM), data: Buffer.from(order.jobId) })
+      );
+      setPayMsg({ kind: "", text: `Approve the ${order.amount} SOL payment in your wallet…` });
+      const signature = await sendTransaction(tx, connection);
+      setPayMsg({ kind: "", text: "Payment sent. Checking the program…" });
+      fetch(`${API_BASE}/pay/verify`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jobId: order.jobId, signature }) }).catch(() => {});
+      // The server also finds the payment on-chain by its memo: poll the order either way.
+      for (let i = 0; i < 60; i++) {
+        await new Promise((ok) => setTimeout(ok, 3000));
+        const s = await (await fetch(order.statusUrl)).json().catch(() => ({}));
+        if (s.status === "done") { setRes(s.result); setPaywall(null); setPayMsg(null); return; }
+        if (s.status === "error") throw new Error(s.error || "The check failed after payment. Write to us for a refund.");
+      }
+      throw new Error("Still waiting for the payment to confirm. Reopen this check in a minute.");
+    } catch (e) {
+      setPayMsg({ kind: "err", text: (e?.message || "Payment failed or was cancelled.") + (ordered ? " If the payment went through, the result arrives as soon as it is confirmed." : "") });
+    } finally { setBusy(false); }
+  }
+
   const v = res && verdictOf(res);
   return (
     <div className="tool">
-      <p className="tool-lead">Who can change this program's code tomorrow, and could they drain it? Paste any Solana program address. <b>Free, no wallet needed.</b></p>
+      <p className="tool-lead">Who can change this program's code tomorrow, and could they drain it? Paste any Solana program address. <b>Your first check is free, no wallet needed</b>; then {PROGRAM_PRICE_SOL} SOL per check. The examples are always free.</p>
       <div className="row">
         <input className="fld" placeholder="Program address" value={pid} onChange={(e) => setPid(e.target.value)} spellCheck={false} autoCapitalize="off" />
         <button className="btn" onClick={() => check()} disabled={busy}>{busy ? "Checking…" : "Check"}</button>
@@ -76,6 +125,15 @@ function ProgramCheck() {
         {PICKS.map((p) => <button key={p.id} type="button" className="pick" onClick={() => check(p.id)} disabled={busy}>{p.name}</button>)}
       </div>
       {err && <div className="msg err">{err}</div>}
+      {paywall && (
+        <div className="unlock">
+          <h4>Check this program: {paywall.priceSol} SOL</h4>
+          <p className="hint">{paywall.message} You get the full answer here: who can upgrade it and how, last code change, verified build, security contact.</p>
+          <div className="connect-row"><WalletMultiButton /></div>
+          <button className="btn pay" onClick={payAndCheck} disabled={busy}>{busy ? "Working…" : `Pay ${paywall.priceSol} SOL and check`}</button>
+          {payMsg && <div className={`msg ${payMsg.kind}`}>{payMsg.text}</div>}
+        </div>
+      )}
       {res && (
         <div className={`result tone-${v.tone}`}>
           <div className="verdict"><span className={`dot ${v.tone}`} />{v.title}</div>

@@ -40,6 +40,20 @@ const PRICE_SOL = Number(process.env.SCAN_PRICE_SOL || 1);
 const FREE_SCANS_PER_HOUR = Number(process.env.FREE_SCANS_PER_HOUR || 3);
 const FREE_PROGRAMS_PER_HOUR = Number(process.env.FREE_PROGRAMS_PER_HOUR || 30);
 const FREE_QUEUE_MAX = Number(process.env.FREE_QUEUE_MAX || 6);
+// Program check for people: the first one per device is free, then each costs
+// PROGRAM_CHECK_PRICE_SOL. The examples offered in the app stay free, so anyone (a store
+// reviewer included) can try it as often as they like. Devices are counted, not IPs:
+// a mobile carrier puts thousands of users behind one address. A loose per-IP cap per day
+// limits what clearing the browser storage can get.
+const PROGRAM_CHECK_PRICE_SOL = Number(process.env.PROGRAM_CHECK_PRICE_SOL || 0.1);
+const FREE_PROGRAM_CHECKS = Number(process.env.FREE_PROGRAM_CHECKS || 1);
+const FREE_PROGRAM_CHECKS_PER_IP_DAY = Number(process.env.FREE_PROGRAM_CHECKS_PER_IP_DAY || 20);
+const DEMO_PROGRAMS = new Set([
+  "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4", "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+  "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK", "dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH",
+  "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD", "MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD",
+]);
+const DEVICE_RE = /^[A-Za-z0-9_-]{16,64}$/;
 // Agents buy per request, at volume: both prices sit under the $1 per-payment cap
 // x402 clients ship with, so an agent on default settings can pay without a human.
 // A PayAI settlement costs about $0.0015 on Solana, so a cent still clears it.
@@ -92,6 +106,10 @@ const ERC8004_AGENT_ID = process.env.ERC8004_AGENT_ID ? Number(process.env.ERC80
 const LANDING_URL = process.env.LANDING_URL || "https://watchdog.soladrome.finance";
 const store = new Store(JOBS_FILE);
 const watches = new Store(process.env.WATCHES_FILE || join(dirname(JOBS_FILE), "watches.json"));
+// Free program checks used, per device ("ip:<addr>" when the page sent no device id).
+const USAGE_FILE = process.env.PROGRAM_USAGE_FILE || join(dirname(JOBS_FILE), "program-usage.json");
+const programUsage = (() => { try { return JSON.parse(readFileSync(USAGE_FILE, "utf8")); } catch { return {}; } })();
+const saveUsage = () => { try { writeFileSync(USAGE_FILE, JSON.stringify(programUsage)); } catch (e) { console.error("[usage] not saved:", e.message); } };
 const traffic = new Traffic(process.env.TRAFFIC_FILE || join(dirname(JOBS_FILE), "traffic.jsonl"));
 const queue = new Queue();
 
@@ -134,6 +152,7 @@ function readBody(req, max = 1e5) {
 async function runJob(jobId) {
   const job = store.get(jobId);
   if (!job) return;
+  if (job.kind === "program-check") return runProgramCheck(job);
   store.update(jobId, { status: "running" });
   try {
     const out = mkdtempSync(join(tmpdir(), "ssw-job-"));
@@ -187,6 +206,18 @@ ${top ? `<div style="background:#f7f8fc;border:1px solid #eaecf3;border-radius:1
   } catch (e) {
     store.update(jobId, { status: "error", error: String(e.message).slice(0, 300) });
     console.error(`[job ${jobId}] failed:`, e.message);
+  }
+}
+
+// --- paid program check: runs once the payment is credited, the page polls for it ---
+async function runProgramCheck(job) {
+  store.update(job.id, { status: "running" });
+  try {
+    const r = await inspectProgram(job.programId, { rpc: programRpc });
+    store.update(job.id, { status: "done", result: { ...r, disclaimer: "Who controls this program and what can be verified about it. Not an audit of its code." } });
+  } catch (e) {
+    // Paid and not delivered: kept as an error the page shows, and refundable by hand (see /terms).
+    store.update(job.id, { status: "error", error: `Solana mainnet did not answer: ${String(e.message).slice(0, 160)}` });
   }
 }
 
@@ -1127,11 +1158,33 @@ const server = createServer(async (req, res) => {
       if (rateLimited(`free-program:${ip}`, FREE_PROGRAMS_PER_HOUR, 3600_000)) return send(res, 429, { error: "Free checks are limited per hour. Try again later." });
       const body = await readBody(req);
       if (!isPubkey(body.programId)) return send(res, 400, { error: "Enter a Solana program address (base58)." });
+      const demo = DEMO_PROGRAMS.has(body.programId);
+      const device = DEVICE_RE.test(body.device || "") ? body.device : `ip:${ip}`;
+      if (!demo && ((programUsage[device] || 0) >= FREE_PROGRAM_CHECKS || rateLimited(`free-program-day:${ip}`, FREE_PROGRAM_CHECKS_PER_IP_DAY, 86_400_000)))
+        return send(res, 402, { error: "payment_required", priceSol: PROGRAM_CHECK_PRICE_SOL, freeChecks: FREE_PROGRAM_CHECKS, message: `Your free check is used. Each further check is ${PROGRAM_CHECK_PRICE_SOL} SOL; the examples stay free.` });
       let r;
       try { r = await inspectProgram(body.programId, { rpc: programRpc }); }
       catch { return send(res, 502, { error: "Solana mainnet did not answer. Try again in a minute." }); }
       if (!r.exists || !r.executable) return send(res, r.exists ? 422 : 404, { error: r.flags[0].text });
+      // Only a delivered answer uses the free check: a wrong address costs nothing.
+      if (!demo) { programUsage[device] = (programUsage[device] || 0) + 1; saveUsage(); }
       return send(res, 200, { ...r, disclaimer: "Who controls this program and what can be verified about it. Not an audit of its code." });
+    }
+
+    if (req.method === "POST" && url.pathname === "/program/order") {
+      if (!MERCHANT_WALLET) return send(res, 503, { error: "payments not configured" });
+      if (rateLimited(ip)) return send(res, 429, { error: "rate limited" });
+      const body = await readBody(req);
+      if (!isPubkey(body.programId)) return send(res, 400, { error: "Enter a Solana program address (base58)." });
+      const job = store.create({ kind: "program-check", programId: body.programId, currency: "SOL", priceSol: PROGRAM_CHECK_PRICE_SOL });
+      return send(res, 201, { jobId: job.id, status: job.status, currency: "SOL", amount: PROGRAM_CHECK_PRICE_SOL, payTo: MERCHANT_WALLET, memo: job.id, statusUrl: `${PUBLIC_BASE}/program/order/${job.id}` });
+    }
+
+    if (req.method === "GET" && url.pathname.startsWith("/program/order/")) {
+      const m = /^\/program\/order\/([0-9a-f-]{36})$/.exec(url.pathname);
+      const job = m && store.get(m[1]);
+      if (!job || job.kind !== "program-check") return send(res, 404, { error: "unknown order" });
+      return send(res, 200, { jobId: job.id, status: job.status, ...(job.result ? { result: job.result } : {}), ...(job.error ? { error: job.error } : {}) });
     }
 
     if (req.method === "POST" && url.pathname === "/free/scan") {
