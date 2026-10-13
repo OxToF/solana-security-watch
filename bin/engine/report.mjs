@@ -17,10 +17,14 @@ const ORDER = ["critical", "high", "medium", "low", "info"];
 
 // Split analysis findings into what to fix and what to verify.
 export function partition(findings) {
-  const confident = findings.filter((f) => f.confidence !== "low" && ["critical", "high", "medium"].includes(f.severity));
-  const review = findings.filter((f) => !confident.includes(f));
+  // The AI reviewer's verdict, when there is one, outranks the rule's own confidence:
+  // a ruled-out finding leaves both lists, a confirmed note becomes an issue to fix.
+  const dismissed = findings.filter((f) => f.ai && f.ai.verdict === "false_positive");
+  const live = findings.filter((f) => !dismissed.includes(f));
+  const confident = live.filter((f) => (f.ai && f.ai.verdict === "confirmed") || (f.confidence !== "low" && ["critical", "high", "medium"].includes(f.severity)));
+  const review = live.filter((f) => !confident.includes(f));
   confident.forEach((f, i) => { f.ref = `W-${String(i + 1).padStart(2, "0")}`; });
-  return { confident, review };
+  return { confident, review, dismissed };
 }
 
 export function riskOf(model) {
@@ -43,6 +47,7 @@ function summaryText(m) {
   parts.push(counts.length
     ? `It found ${counts.map(([s, n]) => `${n} ${SEV[s].label.toLowerCase()}`).join(", ")} issue${m.confident.length > 1 ? "s" : ""} to fix${m.review.length ? `, and ${m.review.length} point${m.review.length > 1 ? "s" : ""} worth a second look` : ""}.`
     : `It found no issue in the patterns it checks${m.review.length ? `; ${m.review.length} point${m.review.length > 1 ? "s are" : " is"} listed for a second look` : ""}.`);
+  if (m.triage && m.triage.ran && m.triage.reviewed) parts.push(`An independent AI review re-read ${m.triage.reviewed} finding${m.triage.reviewed > 1 ? "s" : ""} with their code: ${m.triage.confirmed} confirmed, ${m.triage.falsePositive} ruled out, ${m.triage.uncertain} left open.`);
   const live = m.deployed.find((d) => d.cluster === "mainnet") || m.deployed.find((d) => d.cluster);
   if (live && live.authority) parts.push(`On ${live.cluster}, ${live.authority.kind === "none" ? "the program is immutable." : live.authority.kind === "single-key" ? "a single key can replace the program's code at any time, with no delay." : live.authority.text.charAt(0).toLowerCase() + live.authority.text.slice(1)}`);
   const exploitable = m.deps.onchain.filter(needsAttention).length;
@@ -53,8 +58,8 @@ function summaryText(m) {
 }
 
 export function buildModel({ meta, programs, analysis, deployed, deps, closure, lockSize, hygiene }) {
-  const { confident, review } = partition(analysis.findings);
-  const m = { meta, programs, confident, review, deployed, deps, closure: closure ? closure.crates : null, lockSize, hygiene, stats: analysis.stats };
+  const { confident, review, dismissed } = partition(analysis.findings);
+  const m = { meta, programs, confident, review, dismissed, triage: analysis.triage || null, deployed, deps, closure: closure ? closure.crates : null, lockSize, hygiene, stats: analysis.stats };
   m.risk = riskOf(m);
   m.summary = summaryText(m);
   m.coverage = RULES.map((r) => ({ ...r, scope: r.id === "reinit-takeover" ? `${analysis.stats.initIfNeeded + analysis.findings.filter((f) => f.rule === r.id).length} init_if_needed state accounts` : r.scope, hits: analysis.findings.filter((f) => f.rule === r.id).length, confident: confident.filter((f) => f.rule === r.id).length }));
@@ -76,6 +81,8 @@ export function renderHtml(m, { logo = "", cta = null } = {}) {
   const fixMail = (subject, lines) => cta && cta.contact ? `mailto:${cta.contact}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent([`Repository: https://github.com/${m.meta.owner}/${m.meta.repo}`, cta.ref ? `Report reference: ${cta.ref}` : null, ...lines, "", "What we would like fixed, and any deadline:", ""].filter((x) => x !== null).join("\n"))}` : null;
   const chip = (sev) => `<span class="chip" style="color:${SEV[sev].color};background:${SEV[sev].bg}">${SEV[sev].label}</span>`;
 
+  const AI_LABEL = { confirmed: "Confirmed on review", false_positive: "Ruled out on review", uncertain: "Open after review" };
+  const aiBox = (f) => f.ai ? `<div class="ai ${f.ai.verdict}"><b>${AI_LABEL[f.ai.verdict]}</b> <span class="muted">(independent AI review)</span><p>${md2html(f.ai.reasoning)}</p>${f.ai.attack ? `<p><b>Attack.</b> ${md2html(f.ai.attack)}</p>` : ""}</div>` : "";
   const finding = (f) => {
     const link = srcLink(m.meta, f.file, f.line);
     const mail = fixMail(`Fix request ${f.ref}: ${m.meta.owner}/${m.meta.repo}`, [`Finding: ${f.ref} ${f.title.replace(/`/g, "")}`, `Location: ${f.file}:${f.line}`]);
@@ -84,6 +91,7 @@ export function renderHtml(m, { logo = "", cta = null } = {}) {
       <h3>${md2html(f.title)}</h3>
       <div class="loc">${link ? `<a href="${esc(link)}">${esc(f.file)}:${f.line}</a>` : `${esc(f.file)}:${f.line}`}${f.struct ? ` · <code>${esc(f.struct)}</code>` : ""}${f.handlers && f.handlers.length ? ` · handler${f.handlers.length > 1 ? "s" : ""} ${f.handlers.map((h) => `<code>${esc(h)}</code>`).join(", ")}` : ""}</div>
       ${snippetHtml(f.snippet)}
+      ${aiBox(f)}
       <div class="kv"><b>Why it matters</b><p>${md2html(f.why)}</p></div>
       <div class="kv"><b>Fix</b><p>${md2html(f.fix)}</p></div>
       ${mail ? `<a class="fixlink" href="${esc(mail)}">Have Watchdog fix it &rarr;</a>` : ""}
@@ -147,6 +155,7 @@ pre.code{background:#0f1222;color:#d7dbf0;border-radius:10px;padding:10px 0;marg
 pre.code .ln{display:block;padding:0 14px;white-space:pre}pre.code .ln i{display:inline-block;width:3.2em;color:#5b6283;font-style:normal;user-select:none}
 pre.code .focus{background:rgba(153,69,255,.28);box-shadow:inset 3px 0 0 #b98cff}
 .kv{margin-top:8px}.kv b{font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:#6b7188}.kv p{margin:2px 0 0}
+.ai{border-radius:10px;padding:10px 12px;margin:10px 0 0;font-size:.9rem}.ai p{margin:4px 0 0}.ai.confirmed{background:#fde8e8;color:#5c1717}.ai.false_positive{background:#e6f7ef;color:#064e3b}.ai.uncertain{background:#fef7dc;color:#5b3a07}
 .fixlink{display:inline-block;margin-top:10px;font-size:.84rem;font-weight:700;color:#6d3bd6;text-decoration:none}
 .clean{color:#047857;background:#e6f7ef;border:1px solid #bfe9d5;border-radius:10px;padding:11px 14px;font-weight:600}
 details{border:1px solid #e6e8f0;border-radius:12px;padding:10px 14px;margin:10px 0}details summary{cursor:pointer;font-weight:700}
@@ -189,7 +198,12 @@ ${m.confident.length ? m.confident.map(finding).join("") : `<div class="clean">�
 ${m.review.length ? `<h2>Worth a second look</h2>
 <p class="muted">Lower-confidence observations. Each may be handled by an invariant this analysis cannot follow; read the code before acting.</p>
 ${reviewGroups.map(([rule, fs]) => `<details><summary>${esc(ruleName(rule))} <span class="muted">(${fs.length})</span></summary>
-${fs.map((f) => { const link = srcLink(m.meta, f.file, f.line); return `<div class="item"><b>${md2html(f.title)}</b><div class="loc">${link ? `<a href="${esc(link)}">${esc(f.file)}:${f.line}</a>` : `${esc(f.file)}:${f.line}`}${f.struct ? ` · <code>${esc(f.struct)}</code>` : ""}</div><p class="muted" style="margin:4px 0 0">${md2html(f.why)}</p></div>`; }).join("")}</details>`).join("")}` : ""}
+${fs.map((f) => { const link = srcLink(m.meta, f.file, f.line); return `<div class="item"><b>${md2html(f.title)}</b><div class="loc">${link ? `<a href="${esc(link)}">${esc(f.file)}:${f.line}</a>` : `${esc(f.file)}:${f.line}`}${f.struct ? ` · <code>${esc(f.struct)}</code>` : ""}</div><p class="muted" style="margin:4px 0 0">${md2html(f.why)}</p>${aiBox(f)}</div>`; }).join("")}</details>`).join("")}` : ""}
+
+${m.dismissed && m.dismissed.length ? `<h2>Ruled out on review</h2>
+<p class="muted">Raised by the rules, then ruled out by the independent review with the code in front of it. Listed so you can check the call.</p>
+<details><summary>${m.dismissed.length} finding${m.dismissed.length > 1 ? "s" : ""} ruled out</summary>
+${m.dismissed.map((f) => { const link = srcLink(m.meta, f.file, f.line); return `<div class="item"><b>${md2html(f.title)}</b><div class="loc">${link ? `<a href="${esc(link)}">${esc(f.file)}:${f.line}</a>` : `${esc(f.file)}:${f.line}`}</div>${aiBox(f)}</div>`; }).join("")}</details>` : ""}
 
 <h2>Deployed program</h2>
 ${deployedHtml}
@@ -212,6 +226,7 @@ ${m.coverage.map((c) => `<tr><td>${esc(c.name)}</td><td class="muted">${esc(c.sc
 <li>Static analysis of the program source as Anchor reads it: account contexts, constraints, and the handlers and helpers that use them. A rule reports only when no guard is visible in the constraints or in the code the handler runs.</li>
 <li>Dependency reach follows the real dependency graph for the Solana target (target-specific dependencies, dev-dependencies and proc-macros excluded), from the lockfile and the crates.io index.</li>
 <li>Benchmarked on every change against coral-xyz/sealevel-attacks (13 of 13 vulnerable programs caught, none of the 22 fixed versions flagged) and on audited production protocols (no false issue raised).</li>
+${m.triage && m.triage.ran ? `<li>Each finding (up to ${m.triage.reviewed + m.triage.failed + m.triage.skipped}) was re-read by an independent AI reviewer (${esc(m.triage.model)}) with its accounts struct and handlers; its verdicts are shown next to each finding and can be checked against the code.</li>` : ""}
 <li>Economic logic (rounding direction, price and reward math, oracle use) is not judged: those bugs live in what the numbers mean, not in the account wiring.</li>
 <li>It does not execute the program, prove its economics, or replace a manual audit. A clean section means none of the listed patterns was found, not that no bug exists.</li>
 </ul></div>
@@ -232,11 +247,17 @@ export function renderMarkdown(m) {
   for (const f of m.confident) {
     L.push(`### ${f.ref} · ${SEV[f.severity].label} · ${f.title}`, "", `\`${f.file}:${f.line}\`${f.struct ? ` · \`${f.struct}\`` : ""} · confidence ${f.confidence}`, "");
     if (f.snippet) L.push("```rust", ...f.snippet.lines, "```", "");
+    if (f.ai) L.push(`**Review (${f.ai.verdict.replace("_", " ")}).** ${f.ai.reasoning}${f.ai.attack ? ` Attack: ${f.ai.attack}` : ""}`, "");
     L.push(`**Why it matters.** ${f.why}`, "", `**Fix.** ${f.fix}`, "");
   }
   if (m.review.length) {
     L.push("## Worth a second look", "");
-    for (const f of m.review) L.push(`- ${f.title} (\`${f.file}:${f.line}\`)`);
+    for (const f of m.review) L.push(`- ${f.title} (\`${f.file}:${f.line}\`)${f.ai ? ` · review: ${f.ai.verdict.replace("_", " ")}, ${f.ai.reasoning}` : ""}`);
+    L.push("");
+  }
+  if (m.dismissed && m.dismissed.length) {
+    L.push("## Ruled out on review", "");
+    for (const f of m.dismissed) L.push(`- ${f.title} (\`${f.file}:${f.line}\`): ${f.ai.reasoning}`);
     L.push("");
   }
   L.push("## Deployed program", "");

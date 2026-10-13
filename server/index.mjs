@@ -139,7 +139,8 @@ async function runJob(jobId) {
     const out = mkdtempSync(join(tmpdir(), "ssw-job-"));
     const cta = { contact: CONTACT, ref: jobId };
     const result = await runScan(
-      job.local && ALLOW_LOCAL ? { localPath: job.local, out, cta } : { repoUrl: job.repo, out, cta }
+      // The AI review runs on paid web reports only: agents' $0.50 scans and free previews skip it.
+      job.local && ALLOW_LOCAL ? { localPath: job.local, out, cta, review: !job.agent } : { repoUrl: job.repo, out, cta, review: !job.agent }
     );
     const html = readFileSync(result.htmlPath, "utf8");
     const md = readFileSync(result.mdPath, "utf8");
@@ -261,7 +262,7 @@ async function watchWebPayments() {
 
 function summarize(result) {
   const m = result.model;
-  const finding = (f) => ({ ref: f.ref || null, rule: f.rule, severity: f.severity, confidence: f.confidence, title: f.title, file: f.file, line: f.line, struct: f.struct, field: f.field, handlers: f.handlers || [], why: f.why, fix: f.fix, snippet: f.snippet || null });
+  const finding = (f) => ({ ref: f.ref || null, rule: f.rule, severity: f.severity, confidence: f.confidence, title: f.title, file: f.file, line: f.line, struct: f.struct, field: f.field, handlers: f.handlers || [], why: f.why, fix: f.fix, snippet: f.snippet || null, ai: f.ai || null });
   const adv = (a) => ({ id: a.id, aliases: a.aliases, severity: a.severity, summary: a.summary, crates: a.crates, url: a.url, onchain: a.onchain, verdict: a.verdict || null, note: a.note || null });
   return {
     repo: `${result.meta.owner}/${result.meta.repo}`,
@@ -285,6 +286,8 @@ function summarize(result) {
     },
     findings: m.confident.map(finding),
     review: m.review.map(finding),
+    dismissed: (m.dismissed || []).map(finding),
+    aiReview: m.triage || null,
     deployed: m.deployed.map((d) => ({ programId: d.programId, cluster: d.cluster, authority: d.authority || null, lastDeploy: d.lastDeploy || null, verifiedBuild: d.verifiedBuild || null, securityTxt: !!d.securityTxt, flags: (d.flags || []).map((x) => ({ severity: x.severity, id: x.id, text: x.text })) })),
     dependencies: { onchain: m.deps.onchain.map(adv), offchain: m.deps.offchain.map(adv), unmaintained: m.deps.housekeeping.map(adv) },
     coverage: m.coverage.map((c) => ({ rule: c.id, name: c.name, scope: c.scope, toFix: c.confident, toVerify: c.hits - c.confident })),
