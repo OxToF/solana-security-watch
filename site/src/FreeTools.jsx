@@ -55,7 +55,17 @@ function deviceId() {
   } catch { return undefined; }
 }
 
-function ProgramCheck() {
+// The program's public source, when the chain says where it is: the verified build's
+// repository, else security.txt's source_code. Normalized to https://github.com/owner/repo.
+function sourceRepoOf(r) {
+  for (const u of [r.verifiedBuild && r.verifiedBuild.repo, r.securityTxt && r.securityTxt.source_code]) {
+    const m = /^https?:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?(?:[/#?]|$)/.exec(u || "");
+    if (m) return `https://github.com/${m[1]}/${m[2]}`;
+  }
+  return null;
+}
+
+function ProgramCheck({ onScan }) {
   const { connection } = useConnection();
   const { publicKey, sendTransaction, connected } = useWallet();
   const [pid, setPid] = useState("");
@@ -63,6 +73,8 @@ function ProgramCheck() {
   const [res, setRes] = useState(null);
   const [err, setErr] = useState(null);
   const [paywall, setPaywall] = useState(null); // { priceSol, programId }
+  const input = useRef(null);
+  const another = () => { setRes(null); setErr(null); setPaywall(null); setPid(""); input.current && input.current.focus(); input.current && input.current.scrollIntoView({ block: "center", behavior: "smooth" }); };
   const [payMsg, setPayMsg] = useState(null);
 
   async function check(id = pid.trim()) {
@@ -117,7 +129,7 @@ function ProgramCheck() {
     <div className="tool">
       <p className="tool-lead">Who can change this program's code tomorrow, and could they drain it? Paste any Solana program address. <b>Your first check is free, no wallet needed</b>; then {PROGRAM_PRICE_SOL} SOL per check. The examples are always free.</p>
       <div className="row">
-        <input className="fld" placeholder="Program address" value={pid} onChange={(e) => setPid(e.target.value)} spellCheck={false} autoCapitalize="off" />
+        <input ref={input} className="fld" placeholder="Program address" value={pid} onChange={(e) => setPid(e.target.value)} spellCheck={false} autoCapitalize="off" />
         <button className="btn" onClick={() => check()} disabled={busy}>{busy ? "Checking…" : "Check"}</button>
       </div>
       <div className="picks">
@@ -152,6 +164,26 @@ function ProgramCheck() {
           <p className="hint">{res.disclaimer}</p>
         </div>
       )}
+      {res && (() => {
+        const src = sourceRepoOf(res);
+        return (
+          <div className="next">
+            <h4>What next?</h4>
+            {src ? (
+              <>
+                <p className="hint">Its source code is public: <code>{src.replace("https://github.com/", "")}</code>. Watchdog can review it the way an auditor starts: every account and constraint, the dependencies that ship on-chain, the deployed program. <b>Free preview</b>; the full report with every issue and its fix is {DEFAULT_PRICE_SOL} SOL.</p>
+                <button className="btn pay" onClick={() => onScan && onScan(src)}>Scan its source code</button>
+              </>
+            ) : (
+              <>
+                <p className="hint">Its source code is not linked on-chain (no verified build, no source in security.txt). If you know its GitHub repository, scan it: <b>free preview</b>, full report {DEFAULT_PRICE_SOL} SOL.</p>
+                <button className="btn pay" onClick={() => onScan && onScan(null)}>Scan a repository</button>
+              </>
+            )}
+            <button className="btn ghost pay" onClick={another}>Check another program</button>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -179,7 +211,7 @@ function Finding({ f, note }) {
   );
 }
 
-function RepoScan() {
+function RepoScan({ request }) {
   const { connection } = useConnection();
   const { publicKey, sendTransaction, connected } = useWallet();
   const [repo, setRepo] = useState("");
@@ -213,6 +245,12 @@ function RepoScan() {
       tick();
     } catch (e) { setErr(e.message); setBusy(false); }
   }
+
+  // Sent here from a program check: fill the repo and run the free preview at once.
+  useEffect(() => {
+    if (!request) return;
+    if (request.url) scan(request.url); else setRepo("");
+  }, [request]);
 
   const price = state?.unlockPriceUsd ?? DEFAULT_PRICE;
   const priceSol = state?.unlockPriceSol ?? DEFAULT_PRICE_SOL;
@@ -336,13 +374,16 @@ function RepoScan() {
 
 export default function FreeTools() {
   const [tab, setTab] = useState("program");
+  const [scanRequest, setScanRequest] = useState(null);
+  const box = useRef(null);
+  const toScan = (url) => { setTab("repo"); setScanRequest({ url, at: Date.now() }); box.current && box.current.scrollIntoView({ block: "start", behavior: "smooth" }); };
   return (
-    <div className="scanbox">
+    <div className="scanbox" ref={box}>
       <div className="tabs" role="tablist">
-        <button role="tab" aria-selected={tab === "program"} className={tab === "program" ? "on" : ""} onClick={() => setTab("program")}>Check a program <span className="free">free</span></button>
-        <button role="tab" aria-selected={tab === "repo"} className={tab === "repo" ? "on" : ""} onClick={() => setTab("repo")}>Scan a repo <span className="free">free preview</span></button>
+        <button role="tab" aria-selected={tab === "program"} className={tab === "program" ? "on" : ""} onClick={() => { setScanRequest(null); setTab("program"); }}>Check a program <span className="free">1st free</span></button>
+        <button role="tab" aria-selected={tab === "repo"} className={tab === "repo" ? "on" : ""} onClick={() => { setScanRequest(null); setTab("repo"); }}>Scan a repo <span className="free">free preview</span></button>
       </div>
-      {tab === "program" ? <ProgramCheck /> : <RepoScan />}
+      {tab === "program" ? <ProgramCheck onScan={toScan} /> : <RepoScan request={scanRequest} />}
     </div>
   );
 }
