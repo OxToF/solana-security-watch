@@ -364,7 +364,7 @@ function RepoScan({ request }) {
 
           {p.shown.advisory && (
             <div className="adv"><span className={`chip ${sev(p.shown.advisory.severity)}`}>{p.shown.advisory.severity}</span>
-              <div><a href={p.shown.advisory.url} target="_blank" rel="noreferrer">{p.shown.advisory.id}</a>{p.shown.advisory.onchain && <span className="oc">in the program</span>}<div className="hint">{p.shown.advisory.summary}</div>{p.shown.advisory.note && <div className="hint"><b>{p.shown.advisory.verdict === "not-exploitable" ? "Not exploitable on-chain. " : p.shown.advisory.verdict === "conditional" ? "Depends on your code: " : ""}</b><Md text={p.shown.advisory.note} /></div>}</div></div>
+              <div><a href={p.shown.advisory.url} target="_blank" rel="noreferrer">{p.shown.advisory.id}</a>{p.shown.advisory.onchain && <span className="oc">in the program</span>}<div className="hint">{p.shown.advisory.summary}</div>{p.shown.advisory.note && <div className="hint"><b>{p.shown.advisory.verdict === "not-exploitable" ? "Not exploitable on-chain. " : p.shown.advisory.verdict === "not-called" ? "Not called by your program. " : p.shown.advisory.verdict === "conditional" ? "Depends on your code: " : ""}</b><Md text={p.shown.advisory.note} /></div>}</div></div>
           )}
           {p.hidden.advisories > 0 && <div className="lock-note">🔒 {p.hidden.advisories} more dependency advisor{p.hidden.advisories > 1 ? "ies" : "y"}, each judged for on-chain reach, in the full report</div>}
           {p.hidden.review > 0 && <div className="lock-note">🔒 {p.hidden.review} point{p.hidden.review > 1 ? "s" : ""} to verify, with code and reasoning</div>}

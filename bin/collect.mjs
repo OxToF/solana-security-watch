@@ -83,7 +83,15 @@ export function normalize(rawByCrate) {
           severity: severityOf(v),
           published: v.published || null,
           modified: v.modified || null,
+          functions: new Set(), arch: new Set(), os: new Set(),
         };
+      }
+      // RustSec says which functions carry the defect and on which targets it exists.
+      for (const a of v.affected || []) {
+        const aff = (a.ecosystem_specific && a.ecosystem_specific.affects) || {};
+        (aff.functions || []).forEach((x) => adv.functions.add(x));
+        (aff.arch || []).forEach((x) => adv.arch.add(x));
+        (aff.os || []).forEach((x) => adv.os.add(x));
       }
       ids.forEach((id) => adv.ids.add(id));
       adv.crates.add(crate);
@@ -106,6 +114,9 @@ export function normalize(rawByCrate) {
       severity: adv.severity,
       summary: adv.summary.replace(/\s+/g, " ").trim(),
       published: adv.published,
+      functions: [...adv.functions].sort(),
+      arch: [...adv.arch].sort(),
+      os: [...adv.os].sort(),
       url: cid.startsWith("RUSTSEC-")
         ? `https://rustsec.org/advisories/${cid}.html`
         : `https://osv.dev/vulnerability/${cid}`,

@@ -680,6 +680,8 @@ export function analyzeAnchor(programDirs, repoDir) {
     }
   }
 
+  mathRules(fnSigs, files, add, snippetOf);
+
   findings.sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity] || a.file.localeCompare(b.file) || a.line - b.line);
   return {
     findings,
@@ -707,4 +709,91 @@ export const RULES = [
   { id: "manual-close-revival", name: "Account closed by draining lamports only", scope: "every manual close" },
   { id: "truncated-bound-check", name: "Bound checked on a truncated value", scope: "every check on a narrowing cast" },
   { id: "truncating-cast", name: "u128 result cast down with `as`", scope: "every narrowing cast" },
+  { id: "rounding-up-payout", name: "Payout or minted shares rounded up", scope: "every ceiling division" },
+  { id: "reward-accumulator-precision", name: "Reward per share computed without a precision factor", scope: "every reward accumulator" },
+  { id: "divide-before-multiply", name: "Division before multiplication", scope: "every arithmetic expression" },
 ];
+
+// --- arithmetic: rounding direction and precision ------------------------------------
+// Where economic bugs show up in the code itself, without knowing what the numbers mean:
+// which way a division rounds when value leaves the program, and where precision is lost
+// before it is used. Rounding must favour the protocol: down on what it pays or mints,
+// never to zero on what it charges.
+
+const CEIL = /\.\w*div_ceil\s*\(|\bceil_div\w*\s*\(|\bceil_division\w*\s*\(|\.checked_ceil_div\s*\(|\b\w*_round_up\b(?!_if)\w*\s*\(|\bdiv_up\s*\(|\bmul_div_ceil\s*\(|\.ceil\s*\(|\+\s*\(?\s*(\w+)\s*-\s*1\s*\)?\s*\)\s*\/\s*\(?\s*\1\b|\.\w*_add\s*\(\s*(\w+)\s*-\s*1\s*\)[^;]*?\.\w*_div\s*\(\s*\2\s*\)/;
+const PAID_OUT = /(get_amount_out|calc\w*_out|compute\w*_out|amount_out|out_amount|payout|pay_out|withdraw|redeem|claim|reward|owed|refund|proceeds|to_user|user_amount|assets_out|tokens_out|_out$|^out$|(?:shares|lp)(?:_to)?_mint|minted|mint_amount|lp_out|shares_out)/i;
+const STRONG_OUT = /payout|pay_out|redeem|withdraw|claim|refund|owed|proceeds/i;
+const FUNDING = /init|^set_|fund|deposit|^add_|create|top_?up|bribe|notify|seed/i;
+const CHARGED = /fee|cost|required|need|debt|repay|premium|price|strike|amount_in|in_amount|deposit_needed|_in$|min_|max_/i;
+const PRECISION = /PRECISION|SCALE|MULTIPLIER|DECIMALS|\bONE\b|\bWAD\b|\bRAY\b|\bE\d+\b|1_?000_?000_?000|10u128\.pow|10_u128\.pow|\.pow\s*\(|1e\d+|<<\s*\d{2}/;
+const ACCUMULATOR = /\b(\w*(?:per_share|per_lp|per_token|per_unit|per_stake|per_vote|per_weight|reward_index|reward_rate_stored|acc_\w+)\w*)\s*(?:\+=|=\s*[\w.]*\b\1\s*\.\s*(?:checked|saturating|wrapping)_add)/;
+const DENOM_WORD = /(total|supply|staked|weight|lp\b|_lp|shares|votes|liquidity)/i;
+
+function statementsOf(body) {
+  // `let x = ..;`, `x = ..;`, `x += ..;` at any depth, with their offset in the body.
+  const out = [];
+  for (const m of body.matchAll(/(?:let\s+(?:mut\s+)?(\w+)\s*(?::[^=;]+)?=|([\w.]+)\s*(\+=|-=|=)(?!=))([^;]*);/g)) {
+    out.push({ name: m[1] || m[2], op: m[3] || "let", expr: m[4], text: m[0], index: m.index });
+  }
+  return out;
+}
+
+function mathRules(fnSigs, files, add, snippetOf) {
+  for (const fn of fnSigs) {
+    if (/^fn\s+test_|#\[test\]/.test(fn.sig)) continue;
+    const file = files.find((x) => x.rel === fn.file);
+    const at = (idx) => fn.from + fn.body.slice(0, idx).split("\n").length - 1;
+    const stmts = statementsOf(fn.body);
+    // A function named for what it pays out returns it: its tail expression counts too.
+    const fnName = (/fn\s+(\w+)/.exec(fn.sig) || [])[1] || "";
+    const tail = fn.body.replace(/\s*\}\s*$/, "").split(/;/).pop();
+    if (fnName && /->/.test(fn.sig) && !/=/.test(tail.replace(/[=!<>]=|=>/g, ""))) stmts.push({ name: fnName, op: "let", expr: tail, text: tail, index: fn.body.lastIndexOf(tail) });
+    for (const st of stmts) {
+      const leaf = String(st.name).split(".").pop();
+      // 1. Ceiling on what leaves the program.
+      // Confident only when the value and the function both say "paid out"; never on the
+      // funding side (initializing or topping up rewards rounds up what the funder pays).
+      if (CEIL.test(st.expr) && PAID_OUT.test(leaf) && !CHARGED.test(leaf) && !FUNDING.test(fnName) && !FUNDING.test(fn.file.split("/").pop()) && !/fee/i.test(st.expr)) {
+        const line = at(st.index);
+        const sure = STRONG_OUT.test(leaf) && STRONG_OUT.test(fnName);
+        add({ rule: "rounding-up-payout", severity: "high", confidence: sure ? "medium" : "low", struct: null, field: leaf, file: fn.file, line,
+          title: `\`${leaf}\` is rounded up`,
+          why: `\`${leaf}\` is what the program pays out or mints, and it is computed with a ceiling division. Every inexact division hands the caller one base unit more than the pool owes; repeated with small amounts, that drains the reserve (the Balancer V2 rounding class).`,
+          fix: "Round down what the program pays or mints (plain integer division), and round up only what it charges.",
+          snippet: snippetOf(file.raw, line) });
+      }
+      // 2. Division, then multiplication: the remainder is lost before it is scaled up.
+      const dm = /(\b[\w.]+(?:\([^()]*\))?)\s*\/\s*(\(?[\w.]+(?:\([^()]*\))?\)?)\s*\*\s*(\(?[\w.]+)/.exec(st.expr)
+        || /\.(?:checked|saturating|safe|try)_div\s*\(\s*([^()]*(?:\([^()]*\))?[^()]*)\)\s*(?:\?|\.unwrap\(\)|\.ok_or[^.]*?\)\??|\.expect\([^()]*\))?\s*\.(?:checked|saturating|safe|try)_mul\s*\(\s*([^()]*(?:\([^()]*\))?[^()]*)\)/.exec(st.expr);
+      if (dm) {
+        const [divisor, mult] = dm.length === 4 ? [dm[2], dm[3]] : [dm[1], dm[2]];
+        const clean = (x) => String(x).replace(/[()\s]/g, "");
+        const constOnly = (x) => /^[A-Z0-9_]+$|^\d[\d_]*(?:u\d+)?$/.test(clean(x));
+        // `t / WEEK * WEEK` floors on purpose (lock periods, ticks); constants fold at compile time.
+        // Decimal or precision rescaling (`/ 10^a * 10^b`, `/ PRECISION * x`) is deliberate.
+        const scale = (x) => PRECISION.test(x) || /^\d/.test(clean(x)) || /pow|BUFFER|DECIMAL/i.test(x);
+        if (clean(divisor) !== clean(mult) && !scale(divisor) && !scale(mult) && !(constOnly(divisor) && constOnly(mult)) && !(dm.length === 4 && constOnly(dm[1]) && constOnly(divisor))) {
+          const line = at(st.index);
+          add({ rule: "divide-before-multiply", severity: "medium", confidence: "low", struct: null, field: leaf, file: fn.file, line,
+            title: `\`${leaf}\` divides before it multiplies`,
+            why: `The expression divides by \`${clean(divisor)}\` and then multiplies by \`${clean(mult)}\`: the remainder of the division is dropped and the error is scaled up. In reward, lock-weight and price math this pays some users less, or rounds a small position to nothing.`,
+            fix: "Multiply first, then divide (in u128 if needed), unless the truncation is intended.",
+            snippet: snippetOf(file.raw, line) });
+        }
+      }
+    }
+    // 3. A reward-per-share accumulator updated from a division by the total, with no scale.
+    const acc = ACCUMULATOR.exec(fn.body);
+    if (acc) {
+      const divides = stmts.filter((st) => (/\/|_div\b|_div\s*\(/.test(st.expr)) && DENOM_WORD.test(st.expr.split(/\/|_div/).slice(1).join(" ")));
+      if (divides.length && !divides.some((st) => PRECISION.test(st.expr)) && !PRECISION.test(acc[0])) {
+        const line = at(acc.index);
+        add({ rule: "reward-accumulator-precision", severity: "medium", confidence: "medium", struct: null, field: acc[1], file: fn.file, line,
+          title: `\`${acc[1]}\` accumulates rewards without a precision factor`,
+          why: `The reward per share is the new rewards divided by the total, in integers, with no scaling constant. When emissions per update are smaller than the total staked, each update adds zero, and the time window is consumed anyway: those rewards are lost for every staker. Updating often makes it worse.`,
+          fix: "Multiply the rewards by a large constant before dividing (for example 1e12, in u128), and divide by the same constant when paying out.",
+          snippet: snippetOf(file.raw, line) });
+      }
+    }
+  }
+}

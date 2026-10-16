@@ -11,12 +11,13 @@
 // preview is rescanned rather than served, so a fixed false positive never comes back
 // from the cache. 3: engine precision pass (arbitrary-cpi, remaining_accounts, signer).
 // 4: sealevel-attacks classes and the production-protocol precision pass.
-export const PREVIEW_VERSION = 4;
+// 5: dependency advisories judged from the code (called functions, target arch, borsh ZST), math rules.
+export const PREVIEW_VERSION = 5;
 
 // `summary` is the object summarize() builds from a scan result.
 export function previewOf(summary) {
   const [first, ...rest] = summary.findings;
-  const attention = summary.dependencies.onchain.filter((a) => a.verdict !== "not-exploitable");
+  const attention = summary.dependencies.onchain.filter((a) => !["not-exploitable", "not-called"].includes(a.verdict));
   const shownAdvisory = attention[0] || summary.dependencies.onchain[0] || null;
   const totalAdvisories = summary.dependencies.onchain.length + summary.dependencies.offchain.length + summary.dependencies.unmaintained.length;
   return {
