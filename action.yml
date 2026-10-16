@@ -1,0 +1,111 @@
+name: Solana Watchdog
+description: Security review of Anchor programs on every pull request. SARIF alerts, a PR comment and a severity merge gate. Free and open source.
+author: OxToF
+branding:
+  icon: shield
+  color: purple
+
+inputs:
+  path:
+    description: Directory to scan, relative to the checkout (the folder that holds Cargo.toml / Anchor.toml).
+    default: "."
+  fail-on:
+    description: Fail the check when an issue to fix, or a dependency advisory compiled into the program, is at or above this severity. critical | high | medium | low | none
+    default: high
+  upload-sarif:
+    description: Upload alerts to GitHub code scanning (Security tab and PR annotations). Needs `security-events write`; private repositories need GitHub Advanced Security.
+    default: "true"
+  comment:
+    description: Keep one summary comment on the pull request, edited on every push. Needs `pull-requests write`.
+    default: "true"
+  solana-rpc-url:
+    description: Mainnet RPC used to read the deployed program (upgrade authority, verified build). Defaults to the public endpoint.
+    default: ""
+  artifact-name:
+    description: Name of the uploaded report artifact (change it when the action runs twice in one job).
+    default: solana-watchdog-report
+  github-token:
+    description: Token for the PR comment.
+    default: ${{ github.token }}
+
+outputs:
+  risk:
+    description: Overall rating (critical, high, medium, low, clean).
+    value: ${{ steps.scan.outputs.risk }}
+  issues:
+    description: Number of issues to fix.
+    value: ${{ steps.scan.outputs.issues }}
+  sarif:
+    description: Path of the SARIF file.
+    value: ${{ steps.scan.outputs.sarif }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: "22"
+
+    - id: scan
+      shell: bash
+      env:
+        WD_PATH: ${{ inputs.path }}
+        WD_FAIL_ON: ${{ inputs.fail-on }}
+        SOLANA_RPC_URL: ${{ inputs.solana-rpc-url }}
+      run: |
+        out="$RUNNER_TEMP/watchdog"
+        rm -rf "$out" && mkdir -p "$out"
+        set +e
+        node "$GITHUB_ACTION_PATH/bin/cli.mjs" scan --local "$WD_PATH" --out "$out/report" \
+          --sarif "$out/watchdog.sarif" --json "$out/report.json" --fail-on "$WD_FAIL_ON"
+        code=$?
+        set -e
+        echo "code=$code" >> "$GITHUB_OUTPUT"
+        echo "sarif=$out/watchdog.sarif" >> "$GITHUB_OUTPUT"
+        if [ -f "$out/report.json" ]; then
+          node -e 'const m=JSON.parse(require("fs").readFileSync(process.argv[1]));console.log(`risk=${m.risk}\nissues=${m.confident.length}`)' "$out/report.json" >> "$GITHUB_OUTPUT"
+        fi
+        node "$GITHUB_ACTION_PATH/bin/ci-summary.mjs" "$out/report.json" "$WD_FAIL_ON" "$code" "$WD_PATH" \
+          "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "${{ github.event.pull_request.head.sha || github.sha }}" > "$out/summary.md"
+        cat "$out/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+    - if: always() && inputs.upload-sarif == 'true' && (steps.scan.outputs.code == '0' || steps.scan.outputs.code == '3')
+      uses: github/codeql-action/upload-sarif@v3
+      continue-on-error: true
+      with:
+        sarif_file: ${{ steps.scan.outputs.sarif }}
+        category: solana-watchdog
+
+    - if: always()
+      uses: actions/upload-artifact@v4
+      continue-on-error: true
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ runner.temp }}/watchdog/
+        if-no-files-found: ignore
+
+    - if: always() && inputs.comment == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      continue-on-error: true
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR: ${{ github.event.pull_request.number }}
+      run: |
+        body="$RUNNER_TEMP/watchdog/summary.md"
+        [ -f "$body" ] || exit 0
+        id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+          --jq '.[] | select(.body | startswith("<!-- solana-watchdog -->")) | .id' | head -n 1 || true)
+        if [ -n "$id" ]; then
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@"$body" > /dev/null
+        else
+          gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@"$body" > /dev/null
+        fi
+
+    - if: steps.scan.outputs.code != '0'
+      shell: bash
+      env:
+        CODE: ${{ steps.scan.outputs.code }}
+        WD_FAIL_ON: ${{ inputs.fail-on }}
+      run: |
+        if [ "$CODE" = "3" ]; then echo "::error title=Solana Watchdog::Findings at or above $WD_FAIL_ON. See the job summary."; else echo "::error title=Solana Watchdog::The scan failed (exit $CODE). See the scan step log."; fi
+        exit 1

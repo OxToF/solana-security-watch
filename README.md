@@ -100,6 +100,42 @@ report is in [`examples/`](examples/sample-scan-report.html), and
 [`site/index.html`](site/index.html) is a hostable landing page that wraps the scan
 in a paste-your-repo funnel.
 
+## Every pull request — the GitHub Action
+
+The same engine, on your own runner, on every pull request: alerts on the diff and in the
+Security tab (SARIF), one summary comment kept up to date, and a merge gate.
+
+```yaml
+# .github/workflows/watchdog.yml
+name: watchdog
+on: [pull_request]
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: OxToF/solana-security-watch@main
+        with:
+          path: .          # folder holding Cargo.toml / Anchor.toml
+          fail-on: high    # critical | high | medium | low | none
+```
+
+Inputs: `path`, `fail-on`, `upload-sarif`, `comment`, `solana-rpc-url`, `artifact-name`.
+Outputs: `risk`, `issues`, `sarif`. The HTML report is attached to the run as an artifact.
+Points to verify (low confidence) are reported as notes and never block a merge.
+
+The CLI does the same locally, from a clone of this repository:
+
+```bash
+node bin/cli.mjs scan --local . --sarif watchdog.sarif --json report.json --fail-on high
+```
+
+Exit code 3 means the gate tripped; 1 means the scan itself failed.
+
 ## Continuous watch — the `collect` command
 
 The "watch" half is a zero-dependency collector that pulls current RustSec/OSV

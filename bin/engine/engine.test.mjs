@@ -219,3 +219,25 @@ pub fn send(a: u64) -> Result<()> {
     if is_2022 { token_interface::transfer_checked(cpi, a, d) } else { token_interface::transfer(cpi, a) }
 }`).findings.length, 0);
 });
+
+test("SARIF and merge gate: issues are alerts at the scanned path, points to verify never block", async () => {
+  const { renderSarif, gateFailures } = await import("./report.mjs");
+  const m = {
+    confident: [{ ref: "W-01", rule: "missing-signer", severity: "high", confidence: "high", title: "`authority` never signs", why: "w", fix: "f", file: "src/lib.rs", line: 16, struct: "S" }],
+    review: [{ rule: "unchecked-mut-account", severity: "high", confidence: "low", title: "t", why: "w", file: "src/lib.rs", line: 30 }],
+    deps: { onchain: [{ id: "RUSTSEC-0000-0001", severity: "MEDIUM", crates: ["borsh"], summary: "s", url: "u", verdict: "exploitable", note: "n" }] },
+  };
+  const s = renderSarif(m, { root: "programs/x", lockLine: () => ({ file: "Cargo.lock", line: 7 }) });
+  const r = s.runs[0].results;
+  assert.equal(r.length, 3);
+  assert.equal(r[0].level, "error");
+  assert.equal(r[0].locations[0].physicalLocation.artifactLocation.uri, "programs/x/src/lib.rs");
+  assert.equal(r[1].level, "note");
+  assert.equal(r[2].locations[0].physicalLocation.artifactLocation.uri, "programs/x/Cargo.lock");
+  assert.ok(s.runs[0].tool.driver.rules.some((x) => x.id === "RUSTSEC-0000-0001"));
+  assert.equal(gateFailures(m, "high").length, 1);
+  assert.equal(gateFailures(m, "medium").length, 2);
+  assert.equal(gateFailures(m, "critical").length, 0);
+  assert.equal(gateFailures(m, "none").length, 0);
+  assert.throws(() => gateFailures(m, "bogus"));
+});

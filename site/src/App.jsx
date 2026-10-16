@@ -15,6 +15,22 @@ const IN_APP =
     window.matchMedia?.("(display-mode: standalone)").matches);
 
 
+const CI_YAML = `# .github/workflows/watchdog.yml
+name: watchdog
+on: [pull_request]
+permissions:
+  contents: read
+  security-events: write   # alerts in the Security tab and on the diff
+  pull-requests: write     # one summary comment, edited on each push
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: OxToF/solana-security-watch@main
+        with:
+          fail-on: high   # block the merge on a new critical or high`;
+
 const MCP_CMD = "claude mcp add watchdog -e WATCHDOG_SOLANA_PRIVATE_KEY=<base58 key> -e WATCHDOG_EVM_PRIVATE_KEY=<hex key> -- npx -y watchdog-mcp";
 const MCP_JSON = `{
   "mcpServers": {
@@ -138,6 +154,7 @@ export default function App() {
           <a href="#tools">Free check</a>
           <a href="#report">The report</a>
           <a href="#measured">Benchmark</a>
+          <a href="#ci">CI</a>
           <a href="/sample-report.html">Sample</a>
           <a href="#pricing">Pricing</a>
           <a href="/agents">For agents</a>
@@ -201,6 +218,17 @@ export default function App() {
             <div className="buy"><a className="btn ghost" href="/sample-report.html">See that report</a></div>
           </div>
         </div>
+      </section>
+
+      <section id="ci">
+        <h2>Before the audit, and after it</h2>
+        <p className="lead">An audit is a snapshot: stale at the next merge. The same engine runs as a GitHub Action on every pull request, free and open source. Walk into the audit with the known classes already cleared, and keep them cleared once the auditors have left.</p>
+        <Code label="GitHub Actions" text={CI_YAML} />
+        <ul className="checks">
+          <li>Findings land on the diff and in the Security tab (SARIF), with one summary comment on the pull request.</li>
+          <li>A merge gate on the severity you choose, for issues in your code and for advisories in crates that compile into the program.</li>
+          <li>Runs on your runner: your source never leaves GitHub. Deterministic, no AI model, no account, no key.</li>
+        </ul>
       </section>
 
       <section id="pricing">
