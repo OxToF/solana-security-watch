@@ -4,6 +4,7 @@
 
 import { RULES } from "./anchor.mjs";
 import { needsAttention } from "./advisories.mjs";
+import { sep } from "node:path";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 // `code` spans in finding text, escaped first.
@@ -249,4 +250,59 @@ export function renderMarkdown(m) {
   for (const c of m.coverage) L.push(`- ${c.name}: ${c.confident ? `${c.confident} to fix` : c.hits ? `${c.hits} to verify` : "clean"}`);
   L.push("", "_Automated static review. It does not replace a manual audit; a clean section means none of the listed patterns was found._");
   return L.join("\n");
+}
+
+// SARIF 2.1.0 for GitHub code scanning: findings land as alerts on the pull request
+// diff and in the Security tab. `root` prefixes paths when the scanned directory is not
+// the checkout root. Issues to fix are errors or warnings, points to verify are notes.
+const SECURITY_SEVERITY = { critical: "9.5", high: "8.0", medium: "5.5", low: "3.0", info: "1.0" };
+const LEVEL = { critical: "error", high: "error", medium: "warning", low: "note", info: "note" };
+const plainText = (s) => String(s ?? "").replace(/`/g, "");
+
+export function renderSarif(m, { root = "", version = "0", lockLine = () => 1 } = {}) {
+  const uri = (file) => (root && root !== "." ? `${root.replace(/\/+$/, "")}/${file}` : file).split(sep).join("/");
+  const rules = RULES.map((r) => ({
+    id: r.id, name: r.id.replace(/(^|-)(\w)/g, (_, __, c) => c.toUpperCase()),
+    shortDescription: { text: r.name }, fullDescription: { text: `${r.name}. Checked on ${r.scope}.` },
+    helpUri: "https://watchdog.soladrome.finance", properties: { tags: ["security", "solana", "anchor"] },
+  }));
+  const result = (f, toFix) => ({
+    ruleId: f.rule, level: toFix ? LEVEL[f.severity] : "note",
+    message: { text: `${toFix ? `${f.ref} · ` : "To verify · "}${plainText(f.title)}\n\nWhy it matters: ${plainText(f.why)}${f.fix ? `\n\nFix: ${plainText(f.fix)}` : ""}` },
+    locations: [{ physicalLocation: { artifactLocation: { uri: uri(f.file), uriBaseId: "%SRCROOT%" }, region: { startLine: Math.max(1, f.line || 1) } } }],
+    partialFingerprints: { "watchdog/v1": [f.rule, f.file, f.struct || "", plainText(f.title)].join("|") },
+    properties: { "security-severity": toFix ? SECURITY_SEVERITY[f.severity] : "1.0", confidence: f.confidence },
+  });
+  const advisories = m.deps.onchain.filter(needsAttention).map((a) => {
+    const sev = ADV_SEV[a.severity] || "info";
+    const loc = lockLine(a.crates[0]);
+    rules.push({ id: a.id, name: a.id, shortDescription: { text: plainText(a.summary).slice(0, 200) }, helpUri: a.url, properties: { tags: ["security", "dependency", "solana"] } });
+    return {
+      ruleId: a.id, level: LEVEL[sev],
+      message: { text: `${a.id} in ${a.crates.join(", ")}, a crate compiled into the deployed program: ${plainText(a.summary)}${a.note ? `\n\n${plainText(a.note)}` : ""}` },
+      locations: [{ physicalLocation: { artifactLocation: { uri: uri(loc.file), uriBaseId: "%SRCROOT%" }, region: { startLine: loc.line } } }],
+      partialFingerprints: { "watchdog/v1": [a.id, ...a.crates].join("|") },
+      properties: { "security-severity": SECURITY_SEVERITY[sev] },
+    };
+  });
+  return {
+    $schema: "https://json.schemastore.org/sarif-2.1.0.json", version: "2.1.0",
+    runs: [{
+      tool: { driver: { name: "Solana Watchdog", semanticVersion: version, informationUri: "https://watchdog.soladrome.finance", rules } },
+      results: [...m.confident.map((f) => result(f, true)), ...m.review.map((f) => result(f, false)), ...advisories],
+    }],
+  };
+}
+
+// The merge gate: what crosses the threshold, among issues to fix and dependency
+// advisories that reach the program and need attention. Points to verify never block.
+export function gateFailures(m, failOn = "high") {
+  if (!failOn || failOn === "none") return [];
+  const limit = ORDER.indexOf(failOn);
+  if (limit < 0) throw new Error(`--fail-on must be one of ${ORDER.join(", ")} or none`);
+  const over = (sev) => ORDER.indexOf(sev) >= 0 && ORDER.indexOf(sev) <= limit;
+  return [
+    ...m.confident.filter((f) => over(f.severity)).map((f) => `${f.ref} [${f.severity}] ${plainText(f.title)} (${f.file}:${f.line})`),
+    ...m.deps.onchain.filter((a) => needsAttention(a) && over(ADV_SEV[a.severity])).map((a) => `${a.id} [${ADV_SEV[a.severity]}] ${a.crates.join(", ")}: ${plainText(a.summary)}`),
+  ];
 }

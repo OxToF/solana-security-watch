@@ -1,0 +1,43 @@
+name: action
+# The GitHub Action, run on this repository's own vulnerable PoC: it must rate it
+# critical, write the summary, and fail the gate when asked to.
+on:
+  push:
+    paths: ["action.yml", "bin/**", ".github/workflows/action.yml"]
+  pull_request:
+    paths: ["action.yml", "bin/**", ".github/workflows/action.yml"]
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - id: report
+        uses: ./
+        with:
+          path: poc/init-reinit
+          fail-on: none
+          upload-sarif: "false"
+          comment: "false"
+      - id: gate
+        uses: ./
+        continue-on-error: true
+        with:
+          path: poc/init-reinit
+          fail-on: high
+          artifact-name: gate-report
+          upload-sarif: "false"
+          comment: "false"
+      - name: Check the outputs
+        env:
+          RISK: ${{ steps.report.outputs.risk }}
+          ISSUES: ${{ steps.report.outputs.issues }}
+          SARIF: ${{ steps.report.outputs.sarif }}
+          GATE: ${{ steps.gate.outcome }}
+        run: |
+          echo "risk=$RISK issues=$ISSUES gate=$GATE"
+          test "$RISK" = critical
+          test "$ISSUES" -ge 1
+          test "$GATE" = failure
+          node -e 'const s=JSON.parse(require("fs").readFileSync(process.argv[1]));const r=s.runs[0].results;if(!r.length||!r[0].locations[0].physicalLocation.artifactLocation.uri.startsWith("poc/init-reinit/"))process.exit(1)' "$SARIF"

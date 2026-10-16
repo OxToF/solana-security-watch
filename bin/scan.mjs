@@ -8,15 +8,15 @@
 // Deterministic, no LLM: OSV, the crates.io index and an RPC are the only calls.
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, statSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, statSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative, sep, dirname } from "node:path";
+import { join, relative, sep, dirname, resolve, basename } from "node:path";
 import { normalize } from "./collect.mjs";
 import { onchainClosure, parseManifest } from "./engine/reach.mjs";
 import { analyzeAnchor } from "./engine/anchor.mjs";
 import { judgeAdvisories } from "./engine/advisories.mjs";
 import { inspectDeployed } from "./engine/deployed.mjs";
-import { buildModel, renderHtml, renderMarkdown } from "./engine/report.mjs";
+import { buildModel, renderHtml, renderMarkdown, renderSarif } from "./engine/report.mjs";
 
 const OSV_QUERY = process.env.OSV_QUERY_URL || "https://api.osv.dev/v1/query";
 const OSV_BATCH = process.env.OSV_BATCH_URL || "https://api.osv.dev/v1/querybatch";
@@ -213,12 +213,15 @@ export async function runScan(opts = {}) {
     now = new Date(),
     log = console.log,
     cta = null,
+    sarif = null,      // path: also write SARIF 2.1.0 for GitHub code scanning
+    sarifRoot = "",    // the scanned directory, relative to the checkout root
+    json = null,       // path: also write the report model as JSON
   } = opts;
 
   let dir, owner, repo, cleanup = null;
   if (localPath) {
     dir = localPath;
-    owner = "local"; repo = localPath.split(sep).filter(Boolean).pop() || "repo";
+    owner = "local"; repo = basename(resolve(localPath)) || "repo";
   } else {
     const g = parseGithubUrl(repoUrl);
     owner = g.owner; repo = g.repo;
@@ -226,6 +229,15 @@ export async function runScan(opts = {}) {
     dir = await fetchRepo(g.owner, g.repo, work, log, fetchImpl, process.env.GITHUB_TOKEN);
     cleanup = work;
   }
+  // The customer's source lives only as long as the scan: deleted on success and on failure.
+  try {
+    return await scanDir({ dir, owner, repo, localPath, out, fetchImpl, now, log, cta, sarif, sarifRoot, json });
+  } finally {
+    if (cleanup) rmSync(cleanup, { recursive: true, force: true });
+  }
+}
+
+async function scanDir({ dir, owner, repo, localPath, out, fetchImpl, now, log, cta, sarif, sarifRoot, json }) {
 
   // GitHub names the tarball's top directory <owner>-<repo>-<short sha>: the commit we read.
   const ref = localPath ? null : (/-([0-9a-f]{7,40})$/.exec(dir.split(sep).filter(Boolean).pop() || "") || [])[1] || null;
@@ -268,8 +280,28 @@ export async function runScan(opts = {}) {
   writeFileSync(mdPath, md);
   writeFileSync(htmlPath, html);
 
+  if (sarif) {
+    // Dependency alerts point at the crate's entry in the lockfile that pins it.
+    const lockLine = (crate) => {
+      for (const lf of lockFiles) {
+        const k = readFileSync(lf, "utf8").split("\n").findIndex((l) => l.trim() === `name = "${crate}"`);
+        if (k >= 0) return { file: relative(dir, lf), line: k + 1 };
+      }
+      return { file: lockFiles[0] ? relative(dir, lockFiles[0]) : "Cargo.lock", line: 1 };
+    };
+    const version = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+    mkdirSync(dirname(resolve(sarif)), { recursive: true });
+    writeFileSync(sarif, JSON.stringify(renderSarif(model, { root: sarifRoot, version, lockLine }), null, 2) + "\n");
+    log(`[scan] sarif  -> ${sarif}`);
+  }
+  if (json) {
+    mkdirSync(dirname(resolve(json)), { recursive: true });
+    const { coverage, ...rest } = model;
+    writeFileSync(json, JSON.stringify({ ...rest, closure: model.closure ? [...model.closure] : null, coverage }, null, 2) + "\n");
+    log(`[scan] json   -> ${json}`);
+  }
   log(`[scan] risk ${model.risk}: ${model.confident.length} to fix, ${model.review.length} to verify · ${judged.onchain.length} advisories reach the program (of ${deps.advisories.length})`);
   log(`[scan] report -> ${mdPath}`);
   log(`[scan] report -> ${htmlPath}`);
-  return { meta, model, deps, hygiene, mdPath, htmlPath, cleanup };
+  return { meta, model, deps, hygiene, mdPath, htmlPath, dir };
 }

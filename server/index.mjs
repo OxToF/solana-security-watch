@@ -11,7 +11,7 @@
 //
 // Zero runtime deps: Node http + fetch only.
 import { createServer } from "node:http";
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
 import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -169,6 +169,7 @@ async function runJob(jobId) {
     );
     const html = readFileSync(result.htmlPath, "utf8");
     const md = readFileSync(result.mdPath, "utf8");
+    rmSync(out, { recursive: true, force: true });
     // Every report is kept, so the email can link to it: mail clients show an
     // attached .html as source code, not as the branded page.
     mkdirSync(REPORTS_DIR, { recursive: true });
@@ -237,6 +238,7 @@ async function runFreeJob(jobId) {
     const out = mkdtempSync(join(tmpdir(), "ssw-free-"));
     const result = await runScan(job.local && ALLOW_LOCAL ? { localPath: job.local, out } : { repoUrl: job.repo, out });
     // Nothing to review (not a Solana program): an error that gives the free preview back.
+    rmSync(out, { recursive: true, force: true });
     if (!result.model.programs.length && !result.model.lockSize) throw new Error("No Rust / Anchor program found in this repository.");
     store.update(jobId, { status: "done", preview: previewOf(summarize(result)) });
   } catch (e) {

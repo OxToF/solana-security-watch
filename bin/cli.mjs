@@ -10,20 +10,27 @@
 //       surface, diff against the last run, and write a dated report under
 //       <out>/reports/. Run it on a schedule to get a continuous watch.
 //
+//   solana-security-watch scan <github-url> | --local <dir>
+//       [--out <dir>] [--sarif <file>] [--json <file>] [--fail-on critical|high|medium|low|none]
+//       Review an Anchor repository. --sarif writes alerts for GitHub code scanning;
+//       --fail-on exits with code 3 when an issue to fix (or a dependency advisory that
+//       reaches the program) is at or above that severity: the pull request gate.
+//
 // With no subcommand, `install` runs (backwards-compatible with earlier versions).
 
 import { existsSync, cpSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, dirname } from "node:path";
+import { join, dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCollect, DEFAULT_CRATES } from "./collect.mjs";
 import { runScan } from "./scan.mjs";
+import { gateFailures } from "./engine/report.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, "..");
 
 function parseFlags(argv) {
-  const f = { project: false, target: null, yes: false, out: "watch-reports", crates: null, repo: null, local: null };
+  const f = { project: false, target: null, yes: false, out: "watch-reports", crates: null, repo: null, local: null, sarif: null, json: null, failOn: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--project") f.project = true;
@@ -31,6 +38,9 @@ function parseFlags(argv) {
     else if (a === "--target") f.target = argv[++i];
     else if (a === "--out") f.out = argv[++i];
     else if (a === "--local") f.local = argv[++i];
+    else if (a === "--sarif") f.sarif = argv[++i];
+    else if (a === "--json") f.json = argv[++i];
+    else if (a === "--fail-on") f.failOn = argv[++i];
     else if (a === "--crates") f.crates = argv[++i].split(",").map((s) => s.trim()).filter(Boolean);
     else if (!a.startsWith("--") && !f.repo) f.repo = a; // positional repo URL for `scan`
   }
@@ -86,15 +96,29 @@ async function scan(flags) {
     console.error("scan needs a public repo URL: solana-security-watch scan https://github.com/<owner>/<repo>");
     process.exit(1);
   }
+  let result;
   try {
-    await runScan({
+    if (flags.failOn) gateFailures({ confident: [], deps: { onchain: [] } }, flags.failOn); // reject a bad value before scanning
+    result = await runScan({
       repoUrl: flags.repo,
       localPath: flags.local,
       out: flags.out === "watch-reports" ? "scan-out" : flags.out,
+      sarif: flags.sarif,
+      sarifRoot: flags.local ? relative(process.cwd(), resolve(flags.local)) : "",
+      json: flags.json,
     });
   } catch (e) {
     console.error(`[scan] failed: ${e.message}`);
     process.exit(1);
+  }
+  if (flags.failOn) {
+    const failures = gateFailures(result.model, flags.failOn);
+    if (failures.length) {
+      console.error(`[gate] ${failures.length} finding${failures.length > 1 ? "s" : ""} at or above ${flags.failOn}:`);
+      for (const f of failures) console.error(`  - ${f}`);
+      process.exit(3);
+    }
+    console.log(`[gate] passed: nothing at or above ${flags.failOn}`);
   }
 }
 
@@ -102,7 +126,8 @@ function usage() {
   console.log("Usage:");
   console.log("  solana-security-watch install [--project | --target <dir>] [--yes]");
   console.log("  solana-security-watch collect [--out <dir>] [--crates a,b,c]");
-  console.log("  solana-security-watch scan <https://github.com/owner/repo> [--out <dir>]");
+  console.log("  solana-security-watch scan <https://github.com/owner/repo> | --local <dir> [--out <dir>]");
+  console.log("        [--sarif <file>] [--json <file>] [--fail-on critical|high|medium|low|none]");
 }
 
 const [cmd, ...rest] = process.argv.slice(2);
