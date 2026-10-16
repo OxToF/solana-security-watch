@@ -306,7 +306,7 @@ async function watchWebPayments() {
 function summarize(result) {
   const m = result.model;
   const finding = (f) => ({ ref: f.ref || null, rule: f.rule, severity: f.severity, confidence: f.confidence, title: f.title, file: f.file, line: f.line, struct: f.struct, field: f.field, handlers: f.handlers || [], why: f.why, fix: f.fix, snippet: f.snippet || null });
-  const adv = (a) => ({ id: a.id, aliases: a.aliases, severity: a.severity, summary: a.summary, crates: a.crates, url: a.url, onchain: a.onchain, verdict: a.verdict || null, note: a.note || null });
+  const adv = (a) => ({ id: a.id, aliases: a.aliases, severity: a.severity, summary: a.summary, crates: a.crates, url: a.url, onchain: a.onchain, verdict: a.verdict || null, note: a.note || null, evidence: a.evidence || null });
   return {
     repo: `${result.meta.owner}/${result.meta.repo}`,
     date: result.meta.date,

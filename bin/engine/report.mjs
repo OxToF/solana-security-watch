@@ -15,6 +15,7 @@ const SEV = { critical: { label: "Critical", color: "#b91c1c", bg: "#fde8e8" }, 
   clean: { label: "No issue found", color: "#047857", bg: "#e6f7ef" } };
 const ADV_SEV = { CRITICAL: "critical", HIGH: "high", MEDIUM: "medium", LOW: "low", UNRATED: "info" };
 const ORDER = ["critical", "high", "medium", "low", "info"];
+const VERDICT = { "not-exploitable": "Not exploitable on-chain.", "not-called": "Not called by your program.", conditional: "Depends on your code:", exploitable: "Exploitable on-chain." };
 
 // Split analysis findings into what to fix and what to verify.
 export function partition(findings) {
@@ -113,7 +114,7 @@ export function renderHtml(m, { logo = "", cta = null } = {}) {
       ${chip(ADV_SEV[a.severity])}
       <div><a href="${esc(a.url)}">${esc(a.id)}</a> <span class="muted">${esc(a.crates.join(", "))}</span>
       <div>${esc(a.summary)}</div>
-      ${a.verdict ? `<div class="verdict ${a.verdict}"><b>${a.verdict === "not-exploitable" ? "Not exploitable on-chain." : a.verdict === "conditional" ? "Depends on your code:" : "Exploitable on-chain."}</b> ${esc(a.note)}</div>` : ""}</div></div>`;
+      ${a.verdict ? `<div class="verdict ${a.verdict}"><b>${VERDICT[a.verdict]}</b> ${md2html(a.note)}${a.evidence && a.evidence.length ? `<div class="ev">${a.evidence.map((e) => { const l = srcLink(m.meta, e.file, e.line); return l ? `<a href="${esc(l)}">${esc(e.file)}:${e.line}</a>` : `<code>${esc(e.file)}:${e.line}</code>`; }).join(" · ")}</div>` : ""}</div>` : ""}</div></div>`;
 
   const nCov = m.coverage.filter((c) => !c.hits).length;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -157,7 +158,7 @@ details .item{border-top:1px solid #eef0f5;padding:10px 0}details .item:first-of
 .auth{margin:8px 0;font-weight:600}dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;margin:6px 0 0;font-size:.88rem}dt{color:#6b7188}dd{margin:0;word-break:break-all}
 .flags{list-style:none;padding:0;margin:10px 0 0;font-size:.88rem}.flags li{margin:6px 0}
 .adv{display:flex;gap:12px;padding:11px 0;border-top:1px solid #eef0f5}.adv:first-child{border-top:0}.adv a{font-weight:700;color:#4f2bbd}
-.verdict{margin-top:5px;font-size:.86rem;border-radius:8px;padding:6px 10px}.verdict.not-exploitable{background:#e6f7ef;color:#065f46}.verdict.conditional{background:#fef7dc;color:#713f12}.verdict.exploitable{background:#fde8e8;color:#7f1d1d}
+.verdict{margin-top:5px;font-size:.86rem;border-radius:8px;padding:6px 10px}.verdict.not-exploitable{background:#e6f7ef;color:#065f46}.verdict.conditional{background:#fef7dc;color:#713f12}.verdict.exploitable{background:#fde8e8;color:#7f1d1d}.verdict.not-called{background:#eef4ff;color:#1e3a8a}.verdict .ev{margin-top:4px;font-size:.8rem}.verdict .ev a{color:inherit}
 table{width:100%;border-collapse:collapse;font-size:.88rem}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid #eef0f5;vertical-align:top}th{color:#6b7188;font-weight:600;font-size:.78rem;text-transform:uppercase;letter-spacing:.03em}
 td.res{white-space:nowrap;font-weight:700}td.res.ok{color:#047857}td.res.hit{color:#c2410c}td.res.note{color:#a16207}
 .cta{display:flex;gap:16px;align-items:center;justify-content:space-between;background:#f6f1ff;border:1px solid #e2d4ff;border-radius:14px;padding:16px 18px;margin:28px 0 6px}
@@ -213,7 +214,8 @@ ${m.coverage.map((c) => `<tr><td>${esc(c.name)}</td><td class="muted">${esc(c.sc
 <li>Static analysis of the program source as Anchor reads it: account contexts, constraints, and the handlers and helpers that use them. A rule reports only when no guard is visible in the constraints or in the code the handler runs.</li>
 <li>Dependency reach follows the real dependency graph for the Solana target (target-specific dependencies, dev-dependencies and proc-macros excluded), from the lockfile and the crates.io index.</li>
 <li>Benchmarked on every change against coral-xyz/sealevel-attacks (13 of 13 vulnerable programs caught, none of the 22 fixed versions flagged) and on audited production protocols (no false issue raised).</li>
-<li>Economic logic (rounding direction, price and reward math, oracle use) is not judged: those bugs live in what the numbers mean, not in the account wiring.</li>
+<li>Arithmetic is checked where its shape gives it away: payouts or minted shares rounded up, reward-per-share accumulators without a precision factor, division before multiplication. What the numbers mean (price and oracle use, incentive design, lock and vote economics) is not judged.</li>
+<li>Each dependency advisory is judged against the program's code: the target it affects, whether the program calls the defective function (with the line), and for borsh, whether a deserialized type holds a zero-sized field.</li>
 <li>It does not execute the program, prove its economics, or replace a manual audit. A clean section means none of the listed patterns was found, not that no bug exists.</li>
 </ul></div>
 
@@ -244,7 +246,7 @@ export function renderMarkdown(m) {
   for (const d of m.deployed) L.push(d.cluster ? `- \`${d.programId}\` on ${d.cluster}: ${d.authority ? d.authority.text : "authority unknown"}${d.lastDeploy && d.lastDeploy.at ? ` Last code change ${d.lastDeploy.at.slice(0, 10)}.` : ""}` : `- \`${d.programId}\`: not deployed on mainnet or devnet.`);
   L.push("", "## Dependencies reaching the program", "");
   if (!m.deps.onchain.length) L.push("None.");
-  for (const a of m.deps.onchain) L.push(`- [${a.severity}] ${a.id} (${a.crates.join(", ")}): ${a.summary}${a.verdict ? ` **${a.verdict}**: ${a.note}` : ""}`);
+  for (const a of m.deps.onchain) L.push(`- [${a.severity}] ${a.id} (${a.crates.join(", ")}): ${a.summary}${a.verdict ? ` **${a.verdict}**: ${a.note}` : ""}${a.evidence && a.evidence.length ? ` (${a.evidence.map((e) => `\`${e.file}:${e.line}\``).join(", ")})` : ""}`);
   L.push("", `Off-chain tooling advisories: ${m.deps.offchain.length}. Unmaintained crates: ${m.deps.housekeeping.length}.`, "");
   L.push("## What was checked", "");
   for (const c of m.coverage) L.push(`- ${c.name}: ${c.confident ? `${c.confident} to fix` : c.hits ? `${c.hits} to verify` : "clean"}`);

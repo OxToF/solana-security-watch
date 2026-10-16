@@ -241,3 +241,49 @@ test("SARIF and merge gate: issues are alerts at the scanned path, points to ver
   assert.equal(gateFailures(m, "none").length, 0);
   assert.throws(() => gateFailures(m, "bogus"));
 });
+
+test("math: rounding up a payout, rewards without precision, division before multiplication", () => {
+  const rules = (src) => fixture(src).findings.map((f) => `${f.confidence}:${f.rule}`);
+  // The rounding PoC: the ceiling in redeem_insecure only.
+  const poc = analyzeAnchor([join(ROOT, "poc", "rounding-arbitrage", "programs", "rounding-arbitrage")], join(ROOT, "poc", "rounding-arbitrage")).findings;
+  assert.deepEqual(poc.map((f) => `${f.confidence}:${f.rule}:${f.line}`), ["medium:rounding-up-payout:38"]);
+  // Funding side rounds up on purpose; a gross-up for a fee too.
+  assert.deepEqual(rules(`pub fn set_reward_params(x: u64, d: u64) -> u64 { let reward_amount = x.div_ceil(d); reward_amount }`), []);
+  assert.deepEqual(rules(`pub fn redeem(x: u128, d: u128) -> u128 { let payout = x.checked_mul(10).unwrap().div_ceil(d - fee); payout }`), []);
+  // Reward per share: unscaled is lost on small emissions, scaled is fine.
+  const acc = (scale) => `pub fn update(pool: &mut Pool, rewards: u128) {
+    let delta = rewards${scale} / (pool.total_staked as u128);
+    pool.reward_per_share += delta;
+  }`;
+  assert.deepEqual(rules(acc("")), ["medium:reward-accumulator-precision"]);
+  assert.deepEqual(rules(acc(" * REWARD_PRECISION")), []);
+  // Division before multiplication between state values; flooring to a week is deliberate.
+  assert.deepEqual(rules(`pub fn share(r: u64, total: u64, bal: u64) -> u64 { let owed_now = r / total * bal; owed_now }`), ["low:divide-before-multiply"]);
+  assert.deepEqual(rules(`pub fn lock_end(now: i64, d: i64) -> i64 { let end = (now + d) / WEEK * WEEK; end }`), []);
+  assert.deepEqual(rules(`pub fn px(a: u128, d: u32) -> u128 { let p = a.safe_div(10_u128.pow(d)).unwrap().safe_mul(PRICE_PRECISION).unwrap(); p }`), []);
+});
+
+test("advisories judged from the code: borsh ZST, called functions, target arch", async () => {
+  const { judgeAdvisories, borshZst } = await import("./advisories.mjs");
+  const closure = { crates: new Set(["borsh 0.10.3", "anyhow 1.0.99", "keccak 0.1.4"]) };
+  const adv = (id, crate, extra = {}) => ({ id, aliases: [], severity: "MEDIUM", summary: "s", crates: [crate], url: "u", ...extra });
+  const files = (raw) => [{ rel: "programs/p/src/lib.rs", raw }];
+  const zstSrc = `pub struct Marker;\n#[derive(AnchorSerialize, AnchorDeserialize)]\npub struct Args {\n  pub tags: Vec<Marker>,\n}`;
+  assert.equal(borshZst(files(zstSrc)).verdict, "conditional");
+  assert.equal(borshZst(files(zstSrc)).evidence[0].line, 4);
+  assert.equal(borshZst(files(zstSrc.replace("pub struct Marker;", "#[derive(Clone, Copy)]\npub struct Marker;"))).verdict, "not-exploitable");
+  // () and PhantomData are Copy: no longer a reason to worry.
+  assert.equal(borshZst(files(`#[account]\npub struct S { pub a: u64, pub p: PhantomData<u8> }`)).verdict, "not-exploitable");
+  const j = judgeAdvisories([
+    adv("RUSTSEC-2023-0033", "borsh 0.10.3"),
+    adv("RUSTSEC-2026-0190", "anyhow 1.0.99", { functions: ["anyhow::Error::downcast_mut"] }),
+    adv("RUSTSEC-9999-0001", "keccak 0.1.4", { arch: ["aarch64"] }),
+  ], closure, files(`use anyhow::Error;\nfn f(e: &mut Error) { e.downcast_mut::<u8>(); }`));
+  const by = Object.fromEntries(j.onchain.map((a) => [a.id, a]));
+  assert.equal(by["RUSTSEC-2023-0033"].verdict, "not-exploitable");
+  assert.equal(by["RUSTSEC-2026-0190"].verdict, "conditional");
+  assert.equal(by["RUSTSEC-2026-0190"].evidence[0].line, 2);
+  assert.equal(by["RUSTSEC-9999-0001"].verdict, "not-exploitable");
+  const k = judgeAdvisories([adv("RUSTSEC-2026-0190", "anyhow 1.0.99", { functions: ["anyhow::Error::downcast_mut"] })], closure, files(`fn f() {}`));
+  assert.equal(k.onchain[0].verdict, "not-called");
+});

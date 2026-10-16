@@ -259,8 +259,8 @@ async function scanDir({ dir, owner, repo, localPath, out, fetchImpl, now, log, 
   });
   const analysis = analyzeAnchor(programs.map((p) => p.dir), dir);
   log(`[scan] ${analysis.stats.structs} account contexts, ${analysis.stats.fields} accounts, ${analysis.stats.handlers} handlers -> ${analysis.findings.length} observations`);
-  const programSource = programs.flatMap((p) => findFiles(join(p.dir, "src"), (n) => n.endsWith(".rs")).map((f) => readFileSync(f, "utf8"))).join("\n");
-  const judged = judgeAdvisories(deps.advisories, closure, programSource);
+  const programFiles = programs.flatMap((p) => findFiles(join(p.dir, "src"), (n) => n.endsWith(".rs")).map((f) => ({ rel: relative(dir, f), raw: readFileSync(f, "utf8") })));
+  const judged = judgeAdvisories(deps.advisories, closure, programFiles);
   const deployed = await inspectDeployed(analysis.declaredIds, { fetchImpl, log });
   const hygiene = checkHygiene(dir);
 
